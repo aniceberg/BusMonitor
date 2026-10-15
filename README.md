@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="custom_components/bus_monitor/brand/dark_logo@2x.png">
+    <img src="custom_components/bus_monitor/brand/logo@2x.png" alt="Bus Monitor" width="460">
+  </picture>
+</p>
+
 # Bus Monitor (Home Assistant / HACS)
 
 School-bus arrival alerts for Home Assistant, fed by a **Traccar** GPS server
@@ -69,6 +76,11 @@ TRACCAR_URL=http://your-server:8082 TRACCAR_USER=... TRACCAR_PASS=... .venv/bin/
 `bus_monitor.describe_location` answers with the street the bus is on, the cross streets either
 side, its heading, and distance/minutes to your stop, and can speak it on your speakers.
 See [docs/google_home.md](docs/google_home.md) and [examples/where_is_the_bus.yaml](examples/where_is_the_bus.yaml).
+
+## Brand images
+`custom_components/bus_monitor/brand/` holds the icon and logo (light and `dark_` variants) used by
+HACS and the Home Assistant UI. Regenerate them with `.venv/bin/python scripts/make_brand.py`
+(needs the Nunito Sans font, SIL Open Font License).
 
 ## Roadmap
 - WebSocket push (`/api/socket`) instead of polling; blueprint automation.
