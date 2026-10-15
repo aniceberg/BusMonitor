@@ -1,0 +1,14 @@
+# Home Assistant script: speak where the bus is right now.
+# Settings -> Automations & Scenes -> Scripts -> Add -> (YAML mode) and paste this in.
+# Replace the profile id, TTS entity and speakers with your own.
+alias: Where is the bus
+icon: mdi:bus-school
+mode: single
+sequence:
+  - action: bus_monitor.describe_location
+    data:
+      profile: morning                              # slug of your profile name
+      tts_entity: tts.google_translate_en_com       # any TTS entity you have
+      media_player_entity:
+        - media_player.kitchen_speaker              # Google Home / Nest speakers (Cast)
+        - media_player.living_room_speaker

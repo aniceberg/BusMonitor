@@ -1,0 +1,143 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to the bus GPS server",
+        "description": "Traccar server address (e.g. http://your-server:8082) and login, as given by your bus company. If the address starts with http://, the login is not encrypted in transit.",
+        "data": {
+          "base_url": "Server URL",
+          "username": "Username",
+          "password": "Password"
+        }
+      },
+      "devices": {
+        "title": "Choose buses",
+        "description": "Select the bus(es) to track. You can change this later by re-adding the integration.",
+        "data": {
+          "devices": "Buses"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Sign in again",
+        "data": {
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot reach the GPS server.",
+      "invalid_auth": "Username or password was rejected.",
+      "no_devices": "This login can't see any buses."
+    },
+    "abort": {
+      "already_configured": "This server and login are already set up.",
+      "reauth_successful": "Re-authentication was successful."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Bus Monitor",
+        "menu_options": {
+          "add_profile": "Add a bus profile (bus + stop + schedule)",
+          "add_checkpoint": "Add an alert checkpoint",
+          "remove": "Remove a profile or checkpoints",
+          "settings": "Polling settings"
+        }
+      },
+      "add_profile": {
+        "title": "Add a bus profile",
+        "description": "Pick the stop on the map, or tick 'use bus position' to use where the bus is right now. Make one profile for the morning and another for the afternoon if the times differ.",
+        "data": {
+          "name": "Profile name",
+          "device": "Bus",
+          "location": "Stop location and arrival radius",
+          "use_bus_position": "Use the bus's current position instead",
+          "expected_arrival": "Normal arrival time at the stop",
+          "late_grace_min": "Minutes of grace before 'running late'",
+          "active_start": "Watch from",
+          "active_end": "Watch until",
+          "weekdays": "Days",
+          "offline_after_min": "Alert if no GPS fix for N minutes (0 = off)"
+        }
+      },
+      "add_checkpoint": {
+        "title": "Add an alert checkpoint",
+        "description": "When the bus passes this point heading toward the stop, an alert fires. Untick 'announce' to log it silently (shadow mode) and compare it with live checkpoints.",
+        "data": {
+          "profile": "Profile",
+          "label": "Label",
+          "minutes": "Approx. minutes from the stop",
+          "location": "Checkpoint location and radius",
+          "use_bus_position": "Use the bus's current position instead",
+          "announce": "Announce (untick for shadow mode)"
+        }
+      },
+      "remove": {
+        "title": "Remove",
+        "data": {
+          "profile": "Profile",
+          "checkpoints": "Checkpoints to remove",
+          "delete_profile": "Delete the whole profile instead"
+        }
+      },
+      "settings": {
+        "title": "Polling",
+        "data": {
+          "scan_interval": "Seconds between GPS checks"
+        }
+      }
+    },
+    "error": {
+      "location_required": "Pick a location, or tick 'use bus position'.",
+      "name_exists": "That name is already used."
+    },
+    "abort": {
+      "no_profiles": "Add a bus profile first."
+    }
+  },
+  "services": {
+    "reset_trip": {
+      "name": "Reset trip",
+      "description": "Clear today's alert state for a bus profile so it can alert again.",
+      "fields": {
+        "profile": {
+          "name": "Profile",
+          "description": "Profile id (slug of the profile name)."
+        }
+      }
+    },
+    "suggest_checkpoints": {
+      "name": "Suggest checkpoints",
+      "description": "From recorded trips, suggest where the bus typically is N minutes before it reaches the stop.",
+      "fields": {
+        "profile": {
+          "name": "Profile",
+          "description": "Profile id."
+        },
+        "minutes": {
+          "name": "Minutes",
+          "description": "Targets, e.g. [10, 5, 2]."
+        }
+      }
+    },
+    "describe_location": {
+      "name": "Describe location",
+      "description": "Say where a bus is: the street, the cross streets either side, heading and time to your stop. Optionally speak it on a media player.",
+      "fields": {
+        "profile": {
+          "name": "Profile",
+          "description": "Profile id."
+        },
+        "tts_entity": {
+          "name": "TTS entity",
+          "description": "Text-to-speech entity to speak with (optional)."
+        },
+        "media_player_entity": {
+          "name": "Speakers",
+          "description": "Media players to speak on (optional, needs a TTS entity)."
+        }
+      }
+    }
+  }
+}

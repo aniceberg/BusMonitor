@@ -1,0 +1,37 @@
+reset_trip:
+  fields:
+    profile:
+      required: true
+      example: morning_bus_12
+      selector:
+        text:
+
+suggest_checkpoints:
+  fields:
+    profile:
+      required: true
+      example: morning_bus_12
+      selector:
+        text:
+    minutes:
+      example: "[10, 5, 2]"
+      selector:
+        object:
+
+describe_location:
+  fields:
+    profile:
+      required: true
+      example: morning
+      selector:
+        text:
+    tts_entity:
+      example: tts.google_translate_en_com
+      selector:
+        entity:
+          domain: tts
+    media_player_entity:
+      selector:
+        entity:
+          domain: media_player
+          multiple: true
