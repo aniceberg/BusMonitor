@@ -182,6 +182,15 @@ class BusMonitorOptionsFlow(OptionsFlow):
         pos = coord.data.get(device_id) if coord and coord.data else None
         return {"latitude": pos.lat, "longitude": pos.lon} if pos else None
 
+    def _resolve_location(self, user_input: dict[str, Any], device_id: int) -> dict[str, Any] | None:
+        """Map pick, or the bus's position if requested; the map's radius is kept either way."""
+        loc = user_input.get("location")
+        if user_input.get("use_bus_position") and (bus := self._bus_position(device_id)):
+            if loc and "radius" in loc:
+                bus["radius"] = loc["radius"]
+            return bus
+        return loc
+
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         return self.async_show_menu(
             step_id="init",
@@ -209,9 +218,7 @@ class BusMonitorOptionsFlow(OptionsFlow):
         errors: dict[str, str] = {}
         if user_input is not None:
             device_id = int(user_input["device"])
-            loc = user_input.get("location")
-            if user_input.get("use_bus_position"):
-                loc = self._bus_position(device_id) or loc
+            loc = self._resolve_location(user_input, device_id)
             if not loc:
                 errors["base"] = "location_required"
             else:
@@ -274,9 +281,7 @@ class BusMonitorOptionsFlow(OptionsFlow):
             return self.async_abort(reason="no_profiles")
         if user_input is not None:
             profile = profiles[user_input["profile"]]
-            loc = user_input.get("location")
-            if user_input.get("use_bus_position"):
-                loc = self._bus_position(profile["device_id"]) or loc
+            loc = self._resolve_location(user_input, profile["device_id"])
             if not loc:
                 errors["base"] = "location_required"
             elif any(c["label"] == user_input["label"] for c in profile["checkpoints"]):

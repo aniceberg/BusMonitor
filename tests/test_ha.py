@@ -150,3 +150,31 @@ async def test_describe_location_service_speaks_and_returns_text(hass: HomeAssis
     assert resp["text"].startswith("Morning is on Oak Avenue between 3rd Street and 5th Street")
     assert speak[0].data["message"] == resp["text"]
     assert speak[0].data["media_player_entity_id"] == ["media_player.kitchen"]
+
+
+async def test_checkpoint_from_bus_position_keeps_map_radius(hass: HomeAssistant):
+    now = datetime.now(UTC)
+    client = _client([_pos(39.9871, now)])
+    entry = await _setup(hass, client)
+
+    with patch("custom_components.bus_monitor.TraccarClient", return_value=client):
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"next_step_id": "add_checkpoint"}
+        )
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {
+                "profile": "morning",
+                "label": "10 minutes away",
+                "minutes": 10,
+                "location": {"latitude": 1.0, "longitude": 2.0, "radius": 300},
+                "use_bus_position": True,
+                "announce": True,
+            },
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    cp = entry.options["profiles"]["morning"]["checkpoints"][-1]
+    assert (cp["lat"], cp["lon"], cp["radius_m"]) == (39.9871, -75.0, 300)

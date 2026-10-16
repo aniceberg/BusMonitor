@@ -32,25 +32,11 @@ School-bus arrival alerts for Home Assistant, fed by a **Traccar** GPS server
 > Assistant config entry. Ask the vendor for HTTPS or a separate login if you can.
 
 ## Announce on Google Home
-```yaml
-automation:
-  - alias: Bus alerts on Google Home
-    triggers:
-      - trigger: event
-        event_type: bus_monitor_alert
-    actions:
-      - action: tts.speak
-        target:
-          entity_id: tts.google_translate_en_com   # your TTS entity
-        data:
-          media_player_entity_id: media_player.kitchen_display
-          message: >-
-            {% set d = trigger.event.data %}
-            {% if d.kind == 'checkpoint' %}{{ d.bus }} is about {{ d.minutes }} minutes away.
-            {% elif d.kind == 'arrived' %}{{ d.bus }} has arrived.
-            {% elif d.kind == 'late' %}{{ d.bus }} is running late.
-            {% else %}{{ d.bus }} has stopped reporting its location.{% endif %}
-```
+Every alert fires a `bus_monitor_alert` event. Create an automation with an **Event** trigger
+for `bus_monitor_alert` and a **Text-to-speech: Speak** action that targets your Google Home
+speakers. Use the event data below to build the message (for example, say the bus number and
+`minutes` for a `checkpoint` alert).
+
 Event data: `kind`, `profile`, `device_id`, `bus`, `label`, `minutes`, `time`, `latitude`, `longitude`.
 Shadow crossings fire `bus_monitor_shadow` instead.
 
