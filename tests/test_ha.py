@@ -147,7 +147,7 @@ async def test_describe_location_service_speaks_and_returns_text(hass: HomeAssis
     )
     assert resp["street"] == "Oak Ave"
     assert (resp["cross_street_behind"], resp["cross_street_ahead"]) == ("3rd St", "5th St")
-    assert resp["text"].startswith("Morning is on Oak Avenue between 3rd Street and 5th Street")
+    assert resp["text"].startswith("Bus 12 is on Oak Avenue between 3rd Street and 5th Street")
     assert speak[0].data["message"] == resp["text"]
     assert speak[0].data["media_player_entity_id"] == ["media_player.kitchen"]
 
@@ -198,3 +198,30 @@ async def test_remove_checkpoint_is_saved(hass: HomeAssistant):
         )
         await hass.async_block_till_done()
     assert entry.runtime_data.trackers["morning"].config.checkpoints == ()
+
+
+async def test_reload_while_bus_at_stop_does_not_repeat_arrival(hass: HomeAssistant):
+    now = datetime.now(UTC)
+    client = _client([Position(1, 40.0, -75.0, now, speed_mps=0, course=0.0)])
+    events = []
+    hass.bus.async_listen(EVENT_ALERT, events.append)
+    entry = await _setup(hass, client)
+    assert hass.states.get("sensor.bus_12_morning_status").state == "arrived"
+
+    client.positions.return_value = [Position(1, 40.0, -75.0, now + timedelta(seconds=10), speed_mps=0)]
+    with patch("custom_components.bus_monitor.TraccarClient", return_value=client):
+        await hass.config_entries.async_reload(entry.entry_id)
+        await hass.async_block_till_done()
+    assert events == []
+
+
+async def test_alert_event_names_the_bus(hass: HomeAssistant):
+    now = datetime.now(UTC)
+    client = _client([_pos(39.980, now - timedelta(seconds=30))])
+    await _setup(hass, client)
+    events = []
+    hass.bus.async_listen(EVENT_ALERT, events.append)
+    client.positions.return_value = [_pos(39.9905, now)]
+    async_fire_time_changed(hass, datetime.now(UTC) + timedelta(seconds=30))
+    await hass.async_block_till_done()
+    assert (events[0].data["bus"], events[0].data["profile_name"]) == ("Bus 12", "Morning")

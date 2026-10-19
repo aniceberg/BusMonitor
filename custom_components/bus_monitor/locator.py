@@ -25,7 +25,7 @@ async def async_describe(
     cfg = tracker.config
     pos = (coordinator.data or {}).get(cfg.device_id)
     if pos is None:
-        return {"text": f"{cfg.name} has no known location right now.", "known": False}
+        return {"text": f"{cfg.bus_name or cfg.name} has no known location right now.", "known": False}
 
     now = dt_util.now()
     moving = pos.speed_mps >= 1.0
@@ -44,7 +44,7 @@ async def async_describe(
         tracker.crossings, cfg.checkpoints, coordinator.recorder.trips_for(profile), now
     )
     text = compose(
-        bus_name=cfg.name,
+        bus_name=cfg.bus_name or cfg.name,
         info=info,
         heading=heading,
         speed_mps=pos.speed_mps,

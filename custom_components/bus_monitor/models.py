@@ -123,6 +123,7 @@ class BusConfig:
     active_end: time = time(9, 30)
     weekdays: tuple[int, ...] = (0, 1, 2, 3, 4)  # Monday=0
     offline_after_min: int = 0  # 0 disables the "no GPS fix" alert
+    bus_name: str = ""  # spoken name of the bus, e.g. "Bus 12" (set from the Traccar device)
 
     @classmethod
     def from_dict(cls, profile_id: str, data: dict[str, Any]) -> BusConfig:
@@ -148,6 +149,7 @@ class Alert:
     profile_id: str
     device_id: int
     bus_name: str
+    profile_name: str
     label: str
     minutes: int | None
     time: datetime
@@ -162,6 +164,7 @@ class Alert:
             "profile": self.profile_id,
             "device_id": self.device_id,
             "bus": self.bus_name,
+            "profile_name": self.profile_name,
             "label": self.label,
             "minutes": self.minutes,
             "time": self.time.isoformat(),
@@ -169,3 +172,9 @@ class Alert:
             "longitude": self.lon,
             **self.extra,
         }
+
+
+def bus_label(device_name: str) -> str:
+    """How to say a Traccar device name: '12' -> 'Bus 12', 'Bus 7' stays as is."""
+    name = device_name.strip()
+    return name if name.lower().startswith("bus") else f"Bus {name}"
