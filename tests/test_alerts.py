@@ -154,3 +154,32 @@ def test_bus_label():
     assert bus_label("12") == "Bus 12"
     assert bus_label("18 Orange") == "Bus 18 Orange"
     assert bus_label("Bus 12") == "Bus 12"
+
+
+def test_no_late_alarm_when_watching_starts_after_the_deadline():
+    """HA restarted after the bus already came and went: stay quiet, don't say 'late'."""
+    stop = StopConfig(STOP_LAT, STOP_LON, 75, expected_arrival=time(7, 30), late_grace_min=5)
+    tracker = TripTracker(make_config(stop=stop))
+    restart = MONDAY_7AM + timedelta(minutes=53)  # 07:53, deadlines were 07:25 and 07:35
+    tracker.update(pos(39.95, at=restart, speed_mps=5, course=180), restart)
+    assert tracker.tick(restart) == []
+    assert tracker.tick(restart + timedelta(minutes=20)) == []
+
+
+def test_snapshot_restore_keeps_arrival_and_skips_other_days():
+    tracker = TripTracker(make_config())
+    run(tracker, northbound_trail())
+    snap = tracker.snapshot()
+    assert snap["arrival"] and snap["status"] == "arrived"
+
+    fresh = TripTracker(make_config())
+    fresh.restore(snap, MONDAY_7AM.date())
+    assert fresh.arrived and set(fresh.crossings) == {"10 min", "5 min", "2 min"}
+    # after a restart the bus is away from the stop: still arrived, nothing fires
+    t = MONDAY_7AM + timedelta(hours=1)
+    assert fresh.update(pos(39.99, at=t, speed_mps=5, course=180), t) == []
+    assert fresh.tick(t) == []
+
+    other = TripTracker(make_config())
+    other.restore(snap, (MONDAY_7AM + timedelta(days=1)).date())
+    assert not other.arrived

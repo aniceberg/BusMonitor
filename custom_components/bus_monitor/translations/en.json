@@ -42,7 +42,7 @@
           "add_profile": "Add a bus profile (bus + stop + schedule)",
           "add_checkpoint": "Add an alert checkpoint",
           "remove": "Remove a profile or checkpoints",
-          "settings": "Polling settings"
+          "settings": "Settings (polling, sidebar)"
         }
       },
       "add_profile": {
@@ -82,9 +82,10 @@
         }
       },
       "settings": {
-        "title": "Polling",
+        "title": "Settings",
         "data": {
-          "scan_interval": "Seconds between GPS checks"
+          "scan_interval": "Seconds between GPS checks",
+          "show_panel": "Show Bus Monitor map in the sidebar"
         }
       }
     },

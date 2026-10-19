@@ -12,6 +12,8 @@ from .models import Position
 
 MIN_SAMPLE_INTERVAL = timedelta(seconds=10)
 RETENTION_DAYS = 60
+# An in-progress trail older than this at startup belongs to an earlier trip.
+CURRENT_TRAIL_MAX_AGE = timedelta(hours=3)
 
 
 @dataclass
@@ -81,14 +83,28 @@ class TrailRecorder:
     def trips_for(self, profile_id: str) -> list[TripRecord]:
         return [t for t in self.trips if t.profile_id == profile_id]
 
+    def current_trail(self, profile_id: str) -> list[tuple[datetime, float, float, float]]:
+        return list(self._current.get(profile_id, []))
+
     def as_dict(self) -> dict[str, Any]:
-        return {"trips": [t.as_dict() for t in self.trips]}
+        return {
+            "trips": [t.as_dict() for t in self.trips],
+            "current": {
+                pid: [[t.isoformat(), la, lo, s] for t, la, lo, s in trail]
+                for pid, trail in self._current.items()
+            },
+        }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> TrailRecorder:
+    def from_dict(cls, data: dict[str, Any] | None, now: datetime | None = None) -> TrailRecorder:
+        """Load saved trips; in-progress trails are kept only if recent (same trip)."""
         rec = cls()
         if data:
             rec.trips = [TripRecord.from_dict(t) for t in data.get("trips", [])]
+            for pid, raw in (data.get("current") or {}).items():
+                trail = [(datetime.fromisoformat(t), la, lo, s) for t, la, lo, s in raw]
+                if trail and now is not None and now - trail[-1][0] < CURRENT_TRAIL_MAX_AGE:
+                    rec._current[pid] = trail
         return rec
 
 

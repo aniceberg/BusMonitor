@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import replace
 from datetime import timedelta
 
@@ -30,6 +31,8 @@ from .models import Alert, BusConfig, Position, bus_label
 from .traccar_client import CannotConnect, Device, InvalidAuth, TraccarClient
 
 _LOGGER = logging.getLogger(__name__)
+
+TRAIL_SAVE_INTERVAL_S = 60
 
 
 class BusMonitorCoordinator(DataUpdateCoordinator[dict[int, Position]]):
@@ -63,6 +66,8 @@ class BusMonitorCoordinator(DataUpdateCoordinator[dict[int, Position]]):
         self.geocoder: OverpassGeocoder | None = None  # set during entry setup
         self.trackers: dict[str, TripTracker] = {}
         self.last_alert: dict[str, Alert] = {}
+        self._saved_state: dict[str, dict | None] = {}
+        self._last_save = 0.0
         for profile_id, raw in (entry.options.get(OPT_PROFILES) or {}).items():
             cfg = BusConfig.from_dict(profile_id, raw)
             if device := devices.get(cfg.device_id):
@@ -70,7 +75,29 @@ class BusMonitorCoordinator(DataUpdateCoordinator[dict[int, Position]]):
             self.trackers[profile_id] = TripTracker(cfg)
 
     async def async_load(self) -> None:
-        self.recorder = TrailRecorder.from_dict(await self.store.async_load())
+        """Load recorded trips and today's trip state saved before a restart."""
+        data = await self.store.async_load() or {}
+        now = dt_util.now()
+        self.recorder = TrailRecorder.from_dict(data, now)
+        for profile_id, snap in (data.get("state") or {}).items():
+            if tracker := self.trackers.get(profile_id):
+                tracker.restore(snap, now.date())
+        self._saved_state = self._state()
+
+    def _state(self) -> dict[str, dict | None]:
+        return {pid: t.snapshot() for pid, t in self.trackers.items()}
+
+    def data_to_save(self) -> dict:
+        return {**self.recorder.as_dict(), "state": self._state()}
+
+    def _maybe_save(self, force: bool = False) -> None:
+        """Save when trip state changed, else at most once a minute (for the trail)."""
+        now = time.monotonic()
+        state = self._state()
+        if force or state != self._saved_state or now - self._last_save > TRAIL_SAVE_INTERVAL_S:
+            self._saved_state = state
+            self._last_save = now
+            self.store.async_delay_save(self.data_to_save, 1)
 
     @property
     def profiles_by_device(self) -> dict[int, list[TripTracker]]:
@@ -111,8 +138,7 @@ class BusMonitorCoordinator(DataUpdateCoordinator[dict[int, Position]]):
                         tracker.crossings,
                     )
                     save = save or record is not None
-        if save:
-            self.store.async_delay_save(self.recorder.as_dict, 30)
+        self._maybe_save(force=save)
         return data
 
     def _publish(self, alert: Alert) -> None:
@@ -127,4 +153,5 @@ class BusMonitorCoordinator(DataUpdateCoordinator[dict[int, Position]]):
         if tracker := self.trackers.get(profile_id):
             tracker.reset(dt_util.now().date())
             self.recorder.discard(profile_id)
+            self._maybe_save(force=True)
             self.async_update_listeners()
