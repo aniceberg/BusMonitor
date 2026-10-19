@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
@@ -25,7 +26,7 @@ from .const import (
     STORAGE_VERSION,
 )
 from .geocoder import OverpassGeocoder
-from .models import Alert, BusConfig, Position
+from .models import Alert, BusConfig, Position, bus_label
 from .traccar_client import CannotConnect, Device, InvalidAuth, TraccarClient
 
 _LOGGER = logging.getLogger(__name__)
@@ -64,6 +65,8 @@ class BusMonitorCoordinator(DataUpdateCoordinator[dict[int, Position]]):
         self.last_alert: dict[str, Alert] = {}
         for profile_id, raw in (entry.options.get(OPT_PROFILES) or {}).items():
             cfg = BusConfig.from_dict(profile_id, raw)
+            if device := devices.get(cfg.device_id):
+                cfg = replace(cfg, bus_name=bus_label(device.name))
             self.trackers[profile_id] = TripTracker(cfg)
 
     async def async_load(self) -> None:

@@ -24,6 +24,9 @@ class TripTracker:
 
     def __init__(self, config: BusConfig) -> None:
         self.config = config
+        # False until the first fix after Home Assistant starts or the entry reloads.
+        # That fix only sets up state: we can't know what was already announced.
+        self.seeded = False
         self.reset()
 
     # -- state ------------------------------------------------------------
@@ -59,6 +62,10 @@ class TripTracker:
 
         prev, self.prev = self.prev, pos
         if not self.is_active(now) or not pos.valid:
+            return []
+
+        if not self.seeded:
+            self._seed(pos)
             return []
 
         cfg = self.config
@@ -120,6 +127,25 @@ class TripTracker:
         return alerts
 
     # -- helpers ----------------------------------------------------------------
+    def _seed(self, pos: Position) -> None:
+        """First fix after a (re)start: adopt where the bus is without alerting.
+
+        If the bus is already at the stop it counts as arrived; checkpoints it is
+        sitting inside count as done, so a reload never repeats an announcement.
+        """
+        self.seeded = True
+        cfg = self.config
+        stop = cfg.stop
+        if stop is not None and haversine_m(pos.lat, pos.lon, stop.lat, stop.lon) <= stop.radius_m:
+            self.arrival_time = pos.fix_time
+            self.status = STATUS_ARRIVED
+            self.fired.update(c.label for c in cfg.checkpoints)
+            return
+        self.status = STATUS_EN_ROUTE
+        for c in cfg.checkpoints:
+            if haversine_m(pos.lat, pos.lon, c.lat, c.lon) <= c.radius_m:
+                self.fired.add(c.label)
+
     def _roll_date(self, now: datetime) -> None:
         if self.trip_date != now.date():
             fix, pos, prev = self.last_fix, self.last_pos, self.prev
@@ -203,7 +229,8 @@ class TripTracker:
             kind=kind,
             profile_id=self.config.profile_id,
             device_id=self.config.device_id,
-            bus_name=self.config.name,
+            bus_name=self.config.bus_name or self.config.name,
+            profile_name=self.config.name,
             label=label,
             minutes=minutes,
             time=when,

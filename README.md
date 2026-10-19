@@ -37,7 +37,8 @@ for `bus_monitor_alert` and a **Text-to-speech: Speak** action that targets your
 speakers. Use the event data below to build the message (for example, say the bus number and
 `minutes` for a `checkpoint` alert).
 
-Event data: `kind`, `profile`, `device_id`, `bus`, `label`, `minutes`, `time`, `latitude`, `longitude`.
+Event data: `kind`, `bus` (e.g. "Bus 72"), `profile`, `profile_name`, `device_id`, `label`, `minutes`, `time`,
+`latitude`, `longitude`.
 Shadow crossings fire `bus_monitor_shadow` instead.
 
 ## Entities

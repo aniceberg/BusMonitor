@@ -119,3 +119,38 @@ def test_new_day_rearms_everything():
     alerts = run(tracker, trail)
     assert [a.label for a in alerts] == ["10 min", "5 min", "2 min", "arrived"]
     assert tracker.trip_date == next_day.date()
+
+
+def test_first_fix_at_stop_is_silent_arrival():
+    """A reload while the bus waits at the stop must not repeat 'arrived'."""
+    tracker = TripTracker(make_config())
+    t = MONDAY_7AM
+    assert tracker.update(pos(STOP_LAT, at=t, speed_mps=0), t) == []
+    assert tracker.status == "arrived"
+    t2 = t + timedelta(seconds=10)
+    assert tracker.update(pos(STOP_LAT + 0.0001, at=t2, speed_mps=0), t2) == []
+
+
+def test_first_fix_inside_checkpoint_does_not_reannounce_it():
+    tracker = TripTracker(make_config())
+    t = MONDAY_7AM
+    assert tracker.update(pos(39.990, at=t, speed_mps=5, course=0), t) == []  # inside "5 min"
+    trail = [pos(39.9905 + i * 0.0005, at=t + timedelta(seconds=15 * (i + 1)), speed_mps=5, course=0)
+             for i in range(20)]
+    alerts = [a.label for p in trail for a in tracker.update(p, p.fix_time)]
+    assert alerts == ["2 min", "arrived"]
+
+
+def test_alert_uses_bus_name_and_keeps_profile_name():
+    tracker = TripTracker(make_config(name="East 7th", bus_name="Bus 72"))
+    alerts = run(tracker, northbound_trail())
+    data = alerts[-1].as_event_data()
+    assert (data["bus"], data["profile_name"], data["kind"]) == ("Bus 72", "East 7th", "arrived")
+
+
+def test_bus_label():
+    from custom_components.bus_monitor.models import bus_label
+
+    assert bus_label("72") == "Bus 72"
+    assert bus_label("18 Orange") == "Bus 18 Orange"
+    assert bus_label("Bus 12") == "Bus 12"
