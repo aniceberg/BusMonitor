@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Mapping
 from datetime import time
 from typing import Any
@@ -155,7 +156,9 @@ class BusMonitorOptionsFlow(OptionsFlow):
     """Add/remove bus profiles and checkpoints."""
 
     def _profiles(self) -> dict[str, Any]:
-        return dict(self.config_entry.options.get(OPT_PROFILES) or {})
+        # Deep copy: editing the stored options in place makes Home Assistant see
+        # "no change", so it would neither save nor reload the entry.
+        return copy.deepcopy(dict(self.config_entry.options.get(OPT_PROFILES) or {}))
 
     def _save(self, profiles: dict[str, Any], **extra: Any) -> ConfigFlowResult:
         return self.async_create_entry(

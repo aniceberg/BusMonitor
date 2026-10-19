@@ -178,3 +178,23 @@ async def test_checkpoint_from_bus_position_keeps_map_radius(hass: HomeAssistant
     assert result["type"] is FlowResultType.CREATE_ENTRY
     cp = entry.options["profiles"]["morning"]["checkpoints"][-1]
     assert (cp["lat"], cp["lon"], cp["radius_m"]) == (39.9871, -75.0, 300)
+    # The entry must have been saved and reloaded, so the running tracker sees it.
+    tracker = entry.runtime_data.trackers["morning"]
+    assert "10 minutes away" in [c.label for c in tracker.config.checkpoints]
+    assert hass.states.get("sensor.bus_12_morning_10_minutes_away_actual_minutes") is not None
+
+
+async def test_remove_checkpoint_is_saved(hass: HomeAssistant):
+    client = _client([_pos(39.98, datetime.now(UTC))])
+    entry = await _setup(hass, client)
+    with patch("custom_components.bus_monitor.TraccarClient", return_value=client):
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"next_step_id": "remove"}
+        )
+        await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {"profile": "morning", "checkpoints": ["5 min"], "delete_profile": False},
+        )
+        await hass.async_block_till_done()
+    assert entry.runtime_data.trackers["morning"].config.checkpoints == ()
