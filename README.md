@@ -41,6 +41,20 @@ Event data: `kind`, `bus` (e.g. "Bus 72"), `profile`, `profile_name`, `device_id
 `latitude`, `longitude`.
 Shadow crossings fire `bus_monitor_shadow` instead.
 
+## Map panel
+Bus Monitor adds a **Bus Monitor** page to the sidebar (turn it off under Configure → Settings).
+For each bus profile it shows:
+- your stop, the bus's live position, the latest recorded trip and today's trip so far;
+- the **checkpoints**: drag them to move them, add one by clicking the map or at the bus's
+  current position, change the name/minutes/radius, untick *Announce* for a silent trial, then
+  **Save changes** (administrators only);
+- a **route heatmap** built from every recorded trip: the usual route is the darkest trace and
+  occasional detours show lighter, depending on how often the bus takes them.
+
+Trips are recorded while the bus is inside the profile's watch window, so start the window early
+enough to cover the whole route if you want the heatmap to show all of it.
+Map data © OpenStreetMap contributors.
+
 ## Entities
 Per bus: `device_tracker` (live location). Per profile: status, last alert,
 distance to stop, running-late, and per-checkpoint "actual minutes" (median of real trips,

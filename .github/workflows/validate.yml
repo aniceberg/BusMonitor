@@ -18,6 +18,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: uv venv --python 3.14 && uv pip install pytest-homeassistant-custom-component ruff
+      - run: uv venv --python 3.14 && uv pip install pytest-homeassistant-custom-component home-assistant-frontend ruff
       - run: .venv/bin/ruff check .
       - run: .venv/bin/python -m pytest -q

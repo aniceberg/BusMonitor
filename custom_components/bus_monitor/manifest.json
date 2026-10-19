@@ -5,10 +5,16 @@
     "@aniceberg"
   ],
   "config_flow": true,
+  "dependencies": [
+    "frontend",
+    "http",
+    "panel_custom",
+    "websocket_api"
+  ],
   "documentation": "https://github.com/aniceberg/BusMonitor",
   "integration_type": "service",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/aniceberg/BusMonitor/issues",
   "requirements": [],
-  "version": "0.1.3"
+  "version": "0.2.0"
 }

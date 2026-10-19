@@ -25,6 +25,7 @@ from .const import (
     MIN_SCAN_INTERVAL,
     OPT_PROFILES,
     OPT_SCAN_INTERVAL,
+    OPT_SHOW_PANEL,
 )
 from .traccar_client import CannotConnect, Device, InvalidAuth, TraccarClient
 
@@ -202,15 +203,23 @@ class BusMonitorOptionsFlow(OptionsFlow):
 
     async def async_step_settings(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
-            return self._save(self._profiles(), **{OPT_SCAN_INTERVAL: int(user_input[OPT_SCAN_INTERVAL])})
+            return self._save(
+                self._profiles(),
+                **{
+                    OPT_SCAN_INTERVAL: int(user_input[OPT_SCAN_INTERVAL]),
+                    OPT_SHOW_PANEL: bool(user_input[OPT_SHOW_PANEL]),
+                },
+            )
         current = self.config_entry.options.get(OPT_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
+        show_panel = self.config_entry.options.get(OPT_SHOW_PANEL, True)
         return self.async_show_form(
             step_id="settings",
             data_schema=vol.Schema(
                 {
                     vol.Required(OPT_SCAN_INTERVAL, default=current): vol.All(
                         vol.Coerce(int), vol.Range(min=MIN_SCAN_INTERVAL, max=300)
-                    )
+                    ),
+                    vol.Required(OPT_SHOW_PANEL, default=show_panel): bool,
                 }
             ),
         )

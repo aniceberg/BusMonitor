@@ -41,6 +41,38 @@ class TripTracker:
         self.arrival_time: datetime | None = None
         self.late_fired = False
         self.offline_fired = False
+        # When this tracker started watching today's window. "Late" only fires for a
+        # deadline that passed while we were watching: after a restart we can't tell
+        # whether the bus already came, so we stay quiet rather than raise a false alarm.
+        self.watching_since: datetime | None = None
+
+    # -- persistence ------------------------------------------------------------
+    def snapshot(self) -> dict | None:
+        """Today's trip state, so a restart doesn't forget what was announced."""
+        if self.trip_date is None:
+            return None
+        return {
+            "date": self.trip_date.isoformat(),
+            "status": self.status,
+            "fired": sorted(self.fired),
+            "crossings": {k: v.isoformat() for k, v in self.crossings.items()},
+            "arrival": self.arrival_time.isoformat() if self.arrival_time else None,
+            "late_fired": self.late_fired,
+            "offline_fired": self.offline_fired,
+        }
+
+    def restore(self, data: dict | None, today: date) -> None:
+        """Adopt a snapshot taken earlier today (ignored if it's from another day)."""
+        if not data or data.get("date") != today.isoformat():
+            return
+        self.trip_date = today
+        self.status = data.get("status", STATUS_IDLE)
+        self.fired = set(data.get("fired", []))
+        self.crossings = {k: datetime.fromisoformat(v) for k, v in data.get("crossings", {}).items()}
+        arrival = data.get("arrival")
+        self.arrival_time = datetime.fromisoformat(arrival) if arrival else None
+        self.late_fired = bool(data.get("late_fired"))
+        self.offline_fired = bool(data.get("offline_fired"))
 
     @property
     def arrived(self) -> bool:
@@ -63,6 +95,7 @@ class TripTracker:
         prev, self.prev = self.prev, pos
         if not self.is_active(now) or not pos.valid:
             return []
+        self.watching_since = self.watching_since or now
 
         if not self.seeded:
             self._seed(pos)
@@ -98,6 +131,7 @@ class TripTracker:
         self._roll_date(now)
         if not self.is_active(now) or self.arrived:
             return []
+        self.watching_since = self.watching_since or now
         cfg = self.config
         alerts: list[Alert] = []
 
@@ -107,10 +141,13 @@ class TripTracker:
             grace = timedelta(minutes=stop.late_grace_min)
             lead = max((c.minutes for c in cfg.checkpoints if c.announce), default=0)
             reached_first = any(c.label in self.crossings for c in cfg.checkpoints if c.announce)
+            first_deadline = expected - timedelta(minutes=lead) + grace
+            stop_deadline = expected + grace
+            since = self.watching_since
             stage = None
-            if not reached_first and lead and now >= expected - timedelta(minutes=lead) + grace:
+            if not reached_first and lead and since <= first_deadline <= now:
                 stage = "checkpoint"
-            elif now >= expected + grace:
+            elif since <= stop_deadline <= now:
                 stage = "stop"
             if stage:
                 self.late_fired = True
@@ -134,6 +171,8 @@ class TripTracker:
         sitting inside count as done, so a reload never repeats an announcement.
         """
         self.seeded = True
+        if self.arrived:
+            return  # restored from earlier today
         cfg = self.config
         stop = cfg.stop
         if stop is not None and haversine_m(pos.lat, pos.lon, stop.lat, stop.lon) <= stop.radius_m:
@@ -141,7 +180,8 @@ class TripTracker:
             self.status = STATUS_ARRIVED
             self.fired.update(c.label for c in cfg.checkpoints)
             return
-        self.status = STATUS_EN_ROUTE
+        if self.status == STATUS_IDLE:
+            self.status = STATUS_EN_ROUTE
         for c in cfg.checkpoints:
             if haversine_m(pos.lat, pos.lon, c.lat, c.lon) <= c.radius_m:
                 self.fired.add(c.label)

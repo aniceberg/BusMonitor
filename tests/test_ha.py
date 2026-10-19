@@ -106,26 +106,54 @@ async def test_suggest_service_without_data_returns_empty(hass: HomeAssistant):
 async def test_geocoder_parses_caches_and_reports_errors(hass: HomeAssistant, aioclient_mock):
     from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-    from custom_components.bus_monitor.geocoder import GeocodeError, OverpassGeocoder
+    from custom_components.bus_monitor.geocoder import OVERPASS_URLS, GeocodeError, OverpassGeocoder
     from tests.test_streets import OVERPASS
 
     aioclient_mock.post("https://overpass-api.de/api/interpreter", json=OVERPASS)
     geo = OverpassGeocoder(async_get_clientsession(hass))
     with patch("custom_components.bus_monitor.geocoder.MIN_INTERVAL_S", 0):
         first = await geo.ways_near(40.0015, -75.0)
-        again = await geo.ways_near(40.0016, -75.0)  # same ~55 m cell -> cache
-    assert len(first) == 4 and again is first
+        again = await geo.ways_near(40.0016, -75.0)  # same cell -> cache
+    assert len(first) == 4 and [w.name for w in again] == [w.name for w in first]
     assert aioclient_mock.call_count == 1
 
     aioclient_mock.clear_requests()
-    aioclient_mock.post("https://overpass-api.de/api/interpreter", status=429)
+    for url in OVERPASS_URLS:
+        aioclient_mock.post(url, status=429)
     with patch("custom_components.bus_monitor.geocoder.MIN_INTERVAL_S", 0):
         try:
             await geo.ways_near(41.0, -75.0)
         except GeocodeError as err:
-            assert "429" in str(err)
+            assert "HTTP 429" in str(err)
         else:
             raise AssertionError("expected GeocodeError")
+        assert aioclient_mock.call_count == len(OVERPASS_URLS)  # every mirror tried
+        # backing off: the next lookup fails fast without calling the servers
+        try:
+            await geo.ways_near(42.0, -75.0)
+        except GeocodeError:
+            pass
+        assert aioclient_mock.call_count == len(OVERPASS_URLS)
+
+
+async def test_geocoder_falls_back_to_mirror_and_cache_persists(hass: HomeAssistant, aioclient_mock):
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    from custom_components.bus_monitor.geocoder import OVERPASS_URLS, OverpassGeocoder
+    from tests.test_streets import OVERPASS
+
+    aioclient_mock.post(OVERPASS_URLS[0], status=502)
+    aioclient_mock.post(OVERPASS_URLS[1], json=OVERPASS)
+    saved = []
+    geo = OverpassGeocoder(async_get_clientsession(hass), on_change=lambda: saved.append(1))
+    with patch("custom_components.bus_monitor.geocoder.MIN_INTERVAL_S", 0):
+        ways = await geo.ways_near(40.0015, -75.0)
+    assert len(ways) == 4 and saved == [1]
+    # a new geocoder built from the saved cache answers without any request
+    aioclient_mock.clear_requests()
+    again = await OverpassGeocoder(async_get_clientsession(hass), cache=geo.cache).ways_near(40.0012, -75.0004)
+    assert sorted(w.name for w in again) == sorted(w.name for w in ways)
+    assert aioclient_mock.call_count == 0
 
 
 async def test_describe_location_service_speaks_and_returns_text(hass: HomeAssistant):
@@ -225,3 +253,96 @@ async def test_alert_event_names_the_bus(hass: HomeAssistant):
     async_fire_time_changed(hass, datetime.now(UTC) + timedelta(seconds=30))
     await hass.async_block_till_done()
     assert (events[0].data["bus"], events[0].data["profile_name"]) == ("Bus 12", "Morning")
+
+
+async def test_panel_registered_and_websocket_api(hass: HomeAssistant, hass_ws_client):
+    from homeassistant.components.frontend import DATA_PANELS
+
+    from custom_components.bus_monitor.calibration import TripRecord
+
+    now = datetime.now(UTC)
+    entry = await _setup(hass, _client([_pos(39.98, now)]))
+    assert "bus-monitor" in hass.data[DATA_PANELS]
+    assert hass.data[DATA_PANELS]["bus-monitor"].sidebar_icon == "busmonitor:bus"
+
+    trail = [(now + timedelta(seconds=15 * i), 39.98 + i * 0.0004, -75.0, 5.0) for i in range(10)]
+    entry.runtime_data.recorder.trips.append(TripRecord("morning", "2026-10-19", trail[-1][0], {}, trail))
+
+    ws = await hass_ws_client(hass)
+    await ws.send_json({"id": 1, "type": "bus_monitor/overview"})
+    ov = (await ws.receive_json())["result"]
+    prof = ov["profiles"][0]
+    assert ov["can_edit"] and prof["id"] == "morning" and prof["bus"] == "Bus 12"
+    assert prof["tracker_entity"] == "device_tracker.bus_12" and prof["trips"] == 1
+
+    await ws.send_json({"id": 2, "type": "bus_monitor/route", "profile": "morning"})
+    route = (await ws.receive_json())["result"]
+    assert route["trips"] == 1 and len(route["latest"]["path"]) == 10
+    assert route["heatmap"]["cells"] and all(c[2] == 1.0 for c in route["heatmap"]["cells"])
+
+    new = [{"label": "10 min", "minutes": 10, "lat": 39.97, "lon": -75.0, "radius_m": 50, "announce": True}]
+    with patch("custom_components.bus_monitor.TraccarClient", return_value=entry.runtime_data.client):
+        await ws.send_json({"id": 3, "type": "bus_monitor/set_checkpoints", "profile": "morning", "checkpoints": new})
+        assert (await ws.receive_json())["success"]
+        await hass.async_block_till_done()
+    assert [c.label for c in entry.runtime_data.trackers["morning"].config.checkpoints] == ["10 min"]
+
+    dup = new + [dict(new[0])]
+    await ws.send_json({"id": 4, "type": "bus_monitor/set_checkpoints", "profile": "morning", "checkpoints": dup})
+    assert not (await ws.receive_json())["success"]
+
+
+async def test_panel_can_be_hidden(hass: HomeAssistant):
+    from homeassistant.components.frontend import DATA_PANELS
+
+    client = _client([_pos(39.98, datetime.now(UTC))])
+    entry = await _setup(hass, client)
+    with patch("custom_components.bus_monitor.TraccarClient", return_value=client):
+        hass.config_entries.async_update_entry(entry, options={**entry.options, "show_panel": False})
+        await hass.async_block_till_done()
+    assert "bus-monitor" not in hass.data[DATA_PANELS]
+
+
+async def test_restart_after_arrival_does_not_announce_late(hass: HomeAssistant, hass_storage):
+    """Reproduces the 'East 7th is late' announcement after a restart post-arrival."""
+    from homeassistant.util import dt as dt_util
+
+    local_now = dt_util.now()
+    profile = {
+        **PROFILE,
+        "stop": {**PROFILE["stop"], "expected_arrival": (local_now - timedelta(minutes=30)).strftime("%H:%M")},
+    }
+    hass_storage["bus_monitor.trips.restart_test"] = {
+        "version": 1,
+        "key": "bus_monitor.trips.restart_test",
+        "data": {
+            "trips": [],
+            "state": {
+                "morning": {
+                    "date": local_now.date().isoformat(),
+                    "status": "arrived",
+                    "fired": ["5 min"],
+                    "crossings": {},
+                    "arrival": (local_now - timedelta(minutes=25)).isoformat(),
+                    "late_fired": False,
+                    "offline_fired": False,
+                }
+            },
+        },
+    }
+    entry = MockConfigEntry(
+        domain=DOMAIN, entry_id="restart_test", data={**CONN, "devices": [1]}, options={"profiles": {"morning": profile}}
+    )
+    entry.add_to_hass(hass)
+    events = []
+    hass.bus.async_listen(EVENT_ALERT, events.append)
+    # bus has left the stop and is driving away
+    client = _client([Position(1, 39.98, -75.0, datetime.now(UTC), speed_mps=8, course=180.0)])
+    with patch("custom_components.bus_monitor.TraccarClient", return_value=client):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    async_fire_time_changed(hass, datetime.now(UTC) + timedelta(seconds=30))
+    await hass.async_block_till_done()
+    assert events == []
+    assert hass.states.get("binary_sensor.bus_12_morning_running_late").state == "off"
+    assert hass.states.get("sensor.bus_12_morning_status").state == "arrived"

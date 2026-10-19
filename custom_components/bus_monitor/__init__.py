@@ -14,6 +14,7 @@ from homeassistant.exceptions import (
 )
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_create_clientsession, async_get_clientsession
+from homeassistant.helpers.storage import Store
 
 from .calibration import checkpoint_stats, suggest_checkpoints
 from .const import (
@@ -25,11 +26,15 @@ from .const import (
     SERVICE_DESCRIBE,
     SERVICE_RESET_TRIP,
     SERVICE_SUGGEST,
+    STREETS_STORAGE_KEY,
+    STREETS_STORAGE_VERSION,
 )
 from .coordinator import BusMonitorCoordinator
 from .geocoder import OverpassGeocoder
 from .locator import async_describe
+from .panel import async_setup_frontend, async_update_panel
 from .traccar_client import CannotConnect, InvalidAuth, TraccarClient
+from .websocket import async_register_websocket
 
 PLATFORMS = [Platform.DEVICE_TRACKER, Platform.SENSOR, Platform.BINARY_SENSOR]
 
@@ -71,20 +76,39 @@ async def async_setup_entry(hass: HomeAssistant, entry: BusMonitorConfigEntry) -
 
     device_ids = [int(i) for i in entry.data[CONF_DEVICES]]
     coordinator = BusMonitorCoordinator(hass, entry, client, device_ids, devices)
-    coordinator.geocoder = OverpassGeocoder(async_get_clientsession(hass))
+    coordinator.geocoder = await _async_geocoder(hass)
     await coordinator.async_load()
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    async_register_websocket(hass)
+    await async_setup_frontend(hass)
+    await async_update_panel(hass, setting_up=entry)
     entry.async_on_unload(entry.add_update_listener(_async_reload))
     _register_services(hass)
     return True
 
 
+async def _async_geocoder(hass: HomeAssistant) -> OverpassGeocoder:
+    """One shared street lookup with a cache that survives restarts."""
+    data = hass.data.setdefault(DOMAIN, {})
+    if (geocoder := data.get("geocoder")) is None:
+        store: Store = Store(hass, STREETS_STORAGE_VERSION, STREETS_STORAGE_KEY)
+        cache = await store.async_load()
+
+        def _schedule_save() -> None:
+            store.async_delay_save(lambda: geocoder.cache, 30)
+
+        geocoder = OverpassGeocoder(async_get_clientsession(hass), cache=cache, on_change=_schedule_save)
+        data["geocoder"] = geocoder
+    return geocoder
+
+
 async def async_unload_entry(hass: HomeAssistant, entry: BusMonitorConfigEntry) -> bool:
     if unloaded := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
-        await entry.runtime_data.store.async_save(entry.runtime_data.recorder.as_dict())
+        await async_update_panel(hass, unloading=entry)
+        await entry.runtime_data.store.async_save(entry.runtime_data.data_to_save())
     return unloaded
 
 
