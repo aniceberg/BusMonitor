@@ -73,3 +73,14 @@ def test_one_trip_per_day_and_position_at_bounds():
 def test_stats_none_without_data():
     assert checkpoint_stats([], "10 min") is None
     assert suggest_checkpoints([], [10]) == []
+
+
+def test_stale_trail_from_an_earlier_trip_is_dropped():
+    from custom_components.bus_monitor.models import Position
+
+    rec = TrailRecorder()
+    yesterday = MONDAY_7AM - timedelta(days=1)
+    rec.add_point("am", Position(1, 39.9, -75.0, yesterday))
+    rec.add_point("am", Position(1, 39.91, -75.0, yesterday + timedelta(seconds=30)))
+    rec.add_point("am", Position(1, 39.97, -75.0, MONDAY_7AM))
+    assert [p[0] for p in rec.current_trail("am")] == [MONDAY_7AM]

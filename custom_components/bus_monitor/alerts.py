@@ -103,10 +103,11 @@ class TripTracker:
 
         cfg = self.config
         stop = cfg.stop
-        if self.arrived and stop is not None:
-            if haversine_m(pos.lat, pos.lon, stop.lat, stop.lon) > 3 * stop.radius_m + 100:
-                self.reset(self.trip_date)
-                self.last_fix, self.last_pos, self.prev = pos.fix_time, pos, pos
+        if self.arrived:
+            # One trip per profile per day. Once the bus has reached the stop, driving
+            # away must not start a "new trip": that re-armed the late check and
+            # announced "running late" minutes after the bus had come. Use a second
+            # profile for a second trip (e.g. the afternoon run).
             return []
         if self.status == STATUS_IDLE:
             self.status = STATUS_EN_ROUTE

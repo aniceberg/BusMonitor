@@ -55,6 +55,10 @@ class TrailRecorder:
 
     def add_point(self, profile_id: str, pos: Position) -> None:
         trail = self._current.setdefault(profile_id, [])
+        if trail and pos.fix_time - trail[-1][0] > CURRENT_TRAIL_MAX_AGE:
+            # Left over from an earlier trip that never reached the stop: start afresh
+            # so it can't be glued onto today's trip (and pollute the heatmap).
+            trail.clear()
         if trail and pos.fix_time - trail[-1][0] < MIN_SAMPLE_INTERVAL:
             return
         trail.append((pos.fix_time, pos.lat, pos.lon, pos.speed_mps))

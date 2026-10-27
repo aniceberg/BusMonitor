@@ -183,3 +183,21 @@ def test_snapshot_restore_keeps_arrival_and_skips_other_days():
     other = TripTracker(make_config())
     other.restore(snap, (MONDAY_7AM + timedelta(days=1)).date())
     assert not other.arrived
+
+
+def test_bus_leaving_after_arrival_never_announces_late():
+    """Regression: arrived, drove off, then 'running late' was announced anyway."""
+    stop = StopConfig(STOP_LAT, STOP_LON, 87, expected_arrival=time(7, 30), late_grace_min=15)
+    tracker = TripTracker(make_config(stop=stop))
+    alerts = run(tracker, northbound_trail())  # arrives ~07:15
+    assert alerts[-1].kind == "arrived"
+    # bus drives on, well past the stop, then back south through every checkpoint
+    t = alerts[-1].time
+    later = []
+    for i, lat in enumerate([STOP_LAT + 0.004, STOP_LAT + 0.006, 39.996, 39.990, 39.980, 39.975]):
+        when = t + timedelta(minutes=2 * (i + 1))
+        later += tracker.update(pos(lat, at=when, speed_mps=8, course=180), when)
+        later += tracker.tick(when)
+    later += tracker.tick(MONDAY_7AM + timedelta(minutes=46))  # past 07:45 stop deadline
+    assert later == []
+    assert tracker.status == "arrived" and not tracker.late_fired
