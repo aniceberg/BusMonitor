@@ -38,7 +38,13 @@ speakers. Use the event data below to build the message (for example, say the bu
 `minutes` for a `checkpoint` alert).
 
 Event data: `kind`, `bus` (e.g. "Bus 12"), `profile`, `profile_name`, `device_id`, `label`, `minutes`, `time`,
-`latitude`, `longitude`.
+`latitude`, `longitude`. Late alerts also carry `checkpoint` (the first missed one), `due` and `minutes_late`.
+
+**Running late** is announced once per trip, and only when the bus is more than the profile's
+"minutes behind schedule" past the time it's due at a checkpoint and hasn't reached that checkpoint,
+any later one, or your stop. Due times come from the normal arrival time minus each checkpoint's
+measured minutes-to-stop (its nominal minutes until 3 trips are recorded). A detour that skips one
+checkpoint but reaches the next isn't treated as late.
 Shadow crossings fire `bus_monitor_shadow` instead.
 
 ## Map panel

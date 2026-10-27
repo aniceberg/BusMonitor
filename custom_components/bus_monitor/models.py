@@ -84,7 +84,7 @@ class StopConfig:
     lon: float
     radius_m: float = 75.0
     expected_arrival: time | None = None  # local time of day
-    late_grace_min: int = 5
+    late_grace_min: int = 10  # minutes behind schedule at a checkpoint before "running late"
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> StopConfig:
@@ -94,7 +94,7 @@ class StopConfig:
             lon=float(data["lon"]),
             radius_m=float(data.get("radius_m", 75.0)),
             expected_arrival=time.fromisoformat(expected) if expected else None,
-            late_grace_min=int(data.get("late_grace_min", 5)),
+            late_grace_min=int(data.get("late_grace_min", 10)),
         )
 
     def as_dict(self) -> dict[str, Any]:

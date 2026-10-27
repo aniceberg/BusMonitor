@@ -269,7 +269,7 @@ class BusMonitorOptionsFlow(OptionsFlow):
                     vol.Optional("location"): _location_selector(),
                     vol.Optional("use_bus_position", default=False): bool,
                     vol.Optional("expected_arrival"): selector.TimeSelector(),
-                    vol.Required("late_grace_min", default=5): vol.All(
+                    vol.Required("late_grace_min", default=10): vol.All(
                         vol.Coerce(int), vol.Range(min=0, max=60)
                     ),
                     vol.Required("active_start", default="05:30:00"): selector.TimeSelector(),

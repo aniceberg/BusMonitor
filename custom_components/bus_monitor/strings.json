@@ -54,7 +54,7 @@
           "location": "Stop location and arrival radius",
           "use_bus_position": "Use the bus's current position instead",
           "expected_arrival": "Normal arrival time at the stop",
-          "late_grace_min": "Minutes of grace before 'running late'",
+          "late_grace_min": "Minutes behind schedule before 'running late'",
           "active_start": "Watch from",
           "active_end": "Watch until",
           "weekdays": "Days",

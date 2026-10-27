@@ -24,6 +24,9 @@ class TripTracker:
 
     def __init__(self, config: BusConfig) -> None:
         self.config = config
+        # Measured minutes from each checkpoint to the stop (median of recorded trips),
+        # set by the coordinator. Falls back to the checkpoint's nominal minutes.
+        self.lead_minutes: dict[str, float] = {}
         # False until the first fix after Home Assistant starts or the entry reloads.
         # That fix only sets up state: we can't know what was already announced.
         self.seeded = False
@@ -138,23 +141,9 @@ class TripTracker:
 
         stop = cfg.stop
         if stop is not None and stop.expected_arrival is not None and not self.late_fired:
-            expected = datetime.combine(now.date(), stop.expected_arrival, tzinfo=now.tzinfo)
-            grace = timedelta(minutes=stop.late_grace_min)
-            lead = max((c.minutes for c in cfg.checkpoints if c.announce), default=0)
-            reached_first = any(c.label in self.crossings for c in cfg.checkpoints if c.announce)
-            first_deadline = expected - timedelta(minutes=lead) + grace
-            stop_deadline = expected + grace
-            since = self.watching_since
-            stage = None
-            if not reached_first and lead and since <= first_deadline <= now:
-                stage = "checkpoint"
-            elif since <= stop_deadline <= now:
-                stage = "stop"
-            if stage:
+            if late := self._late_check(now, stop.expected_arrival, stop.late_grace_min):
                 self.late_fired = True
-                alerts.append(
-                    self._alert("late", "late", None, now, self.last_pos, {"stage": stage})
-                )
+                alerts.append(self._alert("late", "late", None, now, self.last_pos, late))
 
         if cfg.offline_after_min and not self.offline_fired:
             window_start = datetime.combine(now.date(), cfg.active_start, tzinfo=now.tzinfo)
@@ -165,6 +154,52 @@ class TripTracker:
         return alerts
 
     # -- helpers ----------------------------------------------------------------
+    def due_times(self, expected: datetime) -> list[tuple[Checkpoint, datetime]]:
+        """When the bus is due at each announced checkpoint, farthest first."""
+        out = []
+        for c in self.config.checkpoints:
+            if not c.announce:
+                continue
+            lead = self.lead_minutes.get(c.label) or c.minutes
+            if lead:
+                out.append((c, expected - timedelta(minutes=lead)))
+        return sorted(out, key=lambda item: item[1])
+
+    def _late_check(self, now: datetime, expected_time, tolerance_min: int) -> dict | None:
+        """Running late = the first checkpoint the bus should have passed by now
+        (due + tolerance), with neither it nor any later checkpoint reached.
+
+        Fires about one checkpoint only; a reroute that skips a checkpoint but
+        reaches a later one is not late. Deadlines that passed before we started
+        watching (e.g. a restart) are ignored.
+        """
+        expected = datetime.combine(now.date(), expected_time, tzinfo=now.tzinfo)
+        tolerance = timedelta(minutes=tolerance_min)
+        since = self.watching_since or now
+        due = self.due_times(expected)
+        if not due:
+            # No checkpoints: fall back to "not at the stop by expected + tolerance".
+            if since <= expected + tolerance <= now:
+                return {"stage": "stop", "due": expected.isoformat(timespec="minutes"),
+                        "minutes_late": int((now - expected).total_seconds() // 60)}
+            return None
+        for i, (cp, due_at) in enumerate(due):
+            reached = any(c.label in self.crossings for c, _ in due[i:])
+            if reached:
+                continue
+            deadline = due_at + tolerance
+            if deadline > now:
+                return None  # the first unreached checkpoint isn't overdue yet
+            if deadline < since:
+                return None  # it was overdue before we were watching: can't tell
+            return {
+                "stage": "checkpoint",
+                "checkpoint": cp.label,
+                "due": due_at.isoformat(timespec="minutes"),
+                "minutes_late": int((now - due_at).total_seconds() // 60),
+            }
+        return None
+
     def _seed(self, pos: Position) -> None:
         """First fix after a (re)start: adopt where the bus is without alerting.
 

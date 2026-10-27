@@ -201,3 +201,100 @@ def test_bus_leaving_after_arrival_never_announces_late():
     later += tracker.tick(MONDAY_7AM + timedelta(minutes=46))  # past 07:45 stop deadline
     assert later == []
     assert tracker.status == "arrived" and not tracker.late_fired
+
+
+# --- running late: first missed checkpoint -------------------------------------------
+
+def _late_tracker(tolerance=10, **kw):
+    stop = StopConfig(STOP_LAT, STOP_LON, 75, expected_arrival=time(7, 30), late_grace_min=tolerance)
+    tracker = TripTracker(make_config(stop=stop, **kw))
+    tracker.update(pos(39.95, at=MONDAY_7AM, speed_mps=5, course=0), MONDAY_7AM)  # seed at 07:00
+    return tracker
+
+
+def _at(minute: float):
+    return MONDAY_7AM + timedelta(minutes=minute)
+
+
+def _cross(tracker, lat, minute):
+    """Drive north through `lat` at 07:mm."""
+    out = []
+    for dt, la in ((-0.25, lat - 0.0006), (0, lat)):
+        t = _at(minute + dt)
+        out += tracker.update(pos(la, at=t, speed_mps=5, course=0), t)
+    return out
+
+
+def _tick(tracker, start, end):
+    out = []
+    m = start
+    while m <= end:
+        out += tracker.tick(_at(m))
+        m += 1
+    return out
+
+
+def test_late_replay_no_false_alarm():
+    """Measured leads 18/7.2/3.8, expected 07:30 (+15): on time, arrives, drives off."""
+    tracker = _late_tracker(tolerance=15)
+    tracker.lead_minutes = {"10 min": 18.0, "5 min": 7.2, "2 min": 3.8}
+    alerts = []
+    alerts += _tick(tracker, 1, 11)
+    alerts += _cross(tracker, 39.980, 12)
+    alerts += _tick(tracker, 13, 21)
+    alerts += _cross(tracker, 39.990, 22)
+    alerts += _cross(tracker, 39.996, 26)
+    alerts += _cross(tracker, STOP_LAT, 30)
+    for i, lat in enumerate([STOP_LAT + 0.004, STOP_LAT + 0.006]):  # drives off
+        alerts += tracker.update(pos(lat, at=_at(36 + i), speed_mps=8, course=0), _at(36 + i))
+    alerts += _tick(tracker, 31, 60)
+    assert [a.kind for a in alerts] == ["checkpoint", "checkpoint", "checkpoint", "arrived"]
+
+
+def test_late_reroute_skipping_a_checkpoint_is_not_late():
+    tracker = _late_tracker()
+    alerts = _tick(tracker, 1, 23)
+    alerts += _cross(tracker, 39.990, 24)  # never passed "10 min", but reached "5 min"
+    alerts += _tick(tracker, 25, 26)
+    alerts += _cross(tracker, 39.996, 27)
+    alerts += _tick(tracker, 28, 29)
+    alerts += _cross(tracker, STOP_LAT, 30)
+    assert [a.kind for a in alerts] == ["checkpoint", "checkpoint", "arrived"]
+
+
+def test_late_bus_20_minutes_behind_alerts_once_about_first_checkpoint():
+    tracker = _late_tracker()
+    alerts = _tick(tracker, 1, 50)  # never shows up near the route
+    assert len(alerts) == 1
+    late = alerts[0]
+    assert late.kind == "late" and late.time == _at(30)  # due 07:20 + 10
+    assert late.extra["checkpoint"] == "10 min" and late.extra["minutes_late"] == 10
+
+
+def test_late_stuck_between_checkpoints_names_the_next_one():
+    tracker = _late_tracker()
+    alerts = _tick(tracker, 1, 18)
+    alerts += _cross(tracker, 39.980, 19)
+    alerts += _tick(tracker, 20, 50)
+    late = [a for a in alerts if a.kind == "late"]
+    assert len(late) == 1 and late[0].extra["checkpoint"] == "5 min" and late[0].time == _at(35)
+
+
+def test_late_uses_measured_lead_when_available():
+    tracker = _late_tracker()
+    tracker.lead_minutes = {"10 min": 18.0}  # really 18 min out: due 07:12, alert 07:22
+    late = [a for a in _tick(tracker, 1, 40) if a.kind == "late"]
+    assert late[0].time == _at(22) and late[0].extra["due"].endswith("07:12+00:00")
+
+
+def test_late_restart_after_deadlines_stays_quiet():
+    stop = StopConfig(STOP_LAT, STOP_LON, 75, expected_arrival=time(7, 30), late_grace_min=10)
+    tracker = TripTracker(make_config(stop=stop))
+    tracker.update(pos(39.95, at=_at(45), speed_mps=5, course=0), _at(45))  # HA came up 07:45
+    assert _tick(tracker, 45, 70) == []
+
+
+def test_late_without_checkpoints_falls_back_to_the_stop():
+    tracker = _late_tracker(checkpoints=())
+    late = _tick(tracker, 1, 50)
+    assert [(a.kind, a.extra["stage"], a.time) for a in late] == [("late", "stop", _at(40))]

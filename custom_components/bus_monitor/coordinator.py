@@ -14,7 +14,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util
 
 from .alerts import TripTracker
-from .calibration import TrailRecorder
+from .calibration import TrailRecorder, checkpoint_stats
 from .const import (
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
@@ -33,6 +33,8 @@ from .traccar_client import CannotConnect, Device, InvalidAuth, TraccarClient
 _LOGGER = logging.getLogger(__name__)
 
 TRAIL_SAVE_INTERVAL_S = 60
+# Use measured checkpoint timings for 'running late' once this many trips exist.
+MIN_TRIPS_FOR_MEASURED_LEAD = 3
 
 
 class BusMonitorCoordinator(DataUpdateCoordinator[dict[int, Position]]):
@@ -82,7 +84,19 @@ class BusMonitorCoordinator(DataUpdateCoordinator[dict[int, Position]]):
         for profile_id, snap in (data.get("state") or {}).items():
             if tracker := self.trackers.get(profile_id):
                 tracker.restore(snap, now.date())
+        for tracker in self.trackers.values():
+            self._update_leads(tracker)
         self._saved_state = self._state()
+
+    def _update_leads(self, tracker: TripTracker) -> None:
+        """Give the tracker measured checkpoint-to-stop minutes once there's enough data."""
+        trips = self.recorder.trips_for(tracker.config.profile_id)
+        leads = {}
+        for cp in tracker.config.checkpoints:
+            stats = checkpoint_stats(trips, cp.label)
+            if stats and stats["count"] >= MIN_TRIPS_FOR_MEASURED_LEAD:
+                leads[cp.label] = stats["median"]
+        tracker.lead_minutes = leads
 
     def _state(self) -> dict[str, dict | None]:
         return {pid: t.snapshot() for pid, t in self.trackers.items()}
@@ -138,6 +152,7 @@ class BusMonitorCoordinator(DataUpdateCoordinator[dict[int, Position]]):
                         tracker.crossings,
                     )
                     save = save or record is not None
+                    self._update_leads(tracker)
         self._maybe_save(force=save)
         return data
 

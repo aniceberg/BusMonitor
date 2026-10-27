@@ -346,3 +346,23 @@ async def test_restart_after_arrival_does_not_announce_late(hass: HomeAssistant,
     assert events == []
     assert hass.states.get("binary_sensor.bus_12_morning_running_late").state == "off"
     assert hass.states.get("sensor.bus_12_morning_status").state == "arrived"
+
+
+async def test_measured_leads_need_three_trips(hass: HomeAssistant):
+    from custom_components.bus_monitor.calibration import TripRecord
+
+    entry = await _setup(hass, _client([_pos(39.98, datetime.now(UTC))]))
+    coord = entry.runtime_data
+    tracker = coord.trackers["morning"]
+
+    def trip(day: int) -> TripRecord:
+        crossed = datetime(2026, 10, day, 7, 0, tzinfo=UTC)
+        trail = [(crossed, 39.99, -75.0, 5.0), (crossed + timedelta(minutes=7), 40.0, -75.0, 5.0)]
+        return TripRecord("morning", f"2026-10-{day:02d}", crossed + timedelta(minutes=7), {"5 min": crossed}, trail)
+
+    coord.recorder.trips = [trip(20), trip(21)]
+    coord._update_leads(tracker)
+    assert tracker.lead_minutes == {}  # 2 trips: keep the nominal 5 minutes
+    coord.recorder.trips.append(trip(22))
+    coord._update_leads(tracker)
+    assert tracker.lead_minutes == {"5 min": 7.0}
