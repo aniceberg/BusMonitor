@@ -23,6 +23,21 @@ function heatStyle(frac) {
   return { color: `rgb(${c.join(",")})`, opacity: 0.4 + 0.55 * t };
 }
 
+// Analog alarm-clock outline with the minute number on its face.
+function clockSvg(minutes, faded) {
+  const ink = "#1e293b";
+  const size = minutes >= 10 ? 12.5 : 14;
+  return `<svg class="clock${faded ? " faded" : ""}" width="32" height="34" viewBox="0 0 40 42" aria-hidden="true">
+    <path d="M10 35 L6.5 40 M30 35 L33.5 40" stroke="${ink}" stroke-width="3" stroke-linecap="round"/>
+    <path d="M4 13 A8 8 0 0 1 15.5 4.5" fill="none" stroke="${ink}" stroke-width="3.2" stroke-linecap="round"/>
+    <path d="M36 13 A8 8 0 0 0 24.5 4.5" fill="none" stroke="${ink}" stroke-width="3.2" stroke-linecap="round"/>
+    <rect x="18" y="3.5" width="4" height="5" rx="1" fill="${ink}"/>
+    <circle cx="20" cy="23" r="14.5" fill="#fff" stroke="${ink}" stroke-width="3"/>
+    <text x="20" y="23.5" text-anchor="middle" dominant-baseline="central"
+          font-family="Roboto, Arial, sans-serif" font-weight="800" font-size="${size}" fill="${ink}">${minutes}</text>
+  </svg>`;
+}
+
 const esc = (s) =>
   String(s ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]);
 
@@ -37,7 +52,7 @@ class BusMonitorPanel extends HTMLElement {
     this._canEdit = false;
     this._addMode = false;
     this._route = null;
-    this._layersOn = { checkpoints: true, latest: true, today: true, heatmap: false };
+    this._layersOn = { checkpoints: true, minutes: true, latest: true, today: true, heatmap: false };
   }
 
   set hass(hass) {
@@ -129,6 +144,8 @@ class BusMonitorPanel extends HTMLElement {
                      background: #ffb700; color: #1e293b; border: 2px solid #1e293b; box-shadow: 0 1px 4px rgba(0,0,0,.4); }
         .cp-marker.shadow { background: #cbd5e1; }
         .cp-marker.sel { outline: 3px solid var(--primary-color); }
+        .clock { display: block; filter: drop-shadow(0 1px 2px rgba(0,0,0,.35)); }
+        .clock.faded { opacity: .55; }
         .stop-marker { width: 18px; height: 18px; border-radius: 4px; background: #e53935; border: 2px solid #fff;
                        box-shadow: 0 1px 4px rgba(0,0,0,.5); }
         .bus-marker { width: 30px; height: 30px; border-radius: 50%; background: #1e293b; border: 2px solid #ffb700;
@@ -162,8 +179,10 @@ class BusMonitorPanel extends HTMLElement {
     this._todayLayer = L.layerGroup();
     this._stopLayer = L.layerGroup().addTo(this._map);
     this._cpLayer = L.layerGroup();
+    this._minutesLayer = L.layerGroup();
     this._busLayer = L.layerGroup().addTo(this._map);
     this._map.on("click", (e) => this._mapClick(e));
+    this._map.on("zoomend", () => this._drawMinuteMarks());
     new ResizeObserver(() => {
       this._map.invalidateSize();
       if (this._pendingFit && this._mapHasSize()) this._fit();
@@ -302,6 +321,36 @@ class BusMonitorPanel extends HTMLElement {
         .bindTooltip("Today so far", { sticky: true })
         .addTo(this._todayLayer);
     }
+    this._drawMinuteMarks();
+  }
+
+  // Alarm clocks along the route: where the bus usually is N minutes before the stop.
+  // Every minute when zoomed in, every 2nd / 5th minute further out to avoid clutter.
+  _drawMinuteMarks() {
+    if (!this._minutesLayer) return;
+    this._minutesLayer.clearLayers();
+    const marks = this._route?.minute_marks || [];
+    const zoom = this._map.getZoom();
+    const step = zoom >= 16 ? 1 : zoom >= 15 ? 2 : 5;
+    for (const m of marks) {
+      if (m.minutes % step !== 0) continue;
+      const unsure = m.spread_m > 150; // trips disagree a lot here: show it faded
+      L.marker([m.lat, m.lon], {
+        zIndexOffset: -1000, // keep checkpoints and the bus on top
+        keyboard: false,
+        icon: L.divIcon({
+          className: "",
+          html: clockSvg(m.minutes, unsure),
+          iconSize: [32, 34],
+          iconAnchor: [16, 19],
+        }),
+      })
+        .bindTooltip(
+          `Usually about ${m.minutes} min from your stop` +
+            ` <span style="opacity:.7">(${m.trips} trip${m.trips === 1 ? "" : "s"}${m.trips > 1 ? `, ±${m.spread_m} m` : ""})</span>`,
+        )
+        .addTo(this._minutesLayer);
+    }
   }
 
   _drawCheckpoints() {
@@ -367,6 +416,7 @@ class BusMonitorPanel extends HTMLElement {
     set(this._heatLayer, on.heatmap);
     set(this._latestLayer, on.latest);
     set(this._todayLayer, on.today);
+    set(this._minutesLayer, on.minutes);
     set(this._cpLayer, on.checkpoints);
   }
 
@@ -473,6 +523,8 @@ class BusMonitorPanel extends HTMLElement {
         <label><input type="checkbox" data-layer="checkpoints" ${this._layersOn.checkpoints ? "checked" : ""}> Checkpoints</label>
         <label><input type="checkbox" data-layer="latest" ${this._layersOn.latest ? "checked" : ""} ${r?.latest ? "" : "disabled"}>
           Latest trip ${r?.latest ? `<span class="muted">(${esc(r.latest.date)})</span>` : '<span class="muted">(none yet)</span>'}</label>
+        <label><input type="checkbox" data-layer="minutes" ${this._layersOn.minutes ? "checked" : ""} ${r?.minute_marks?.length ? "" : "disabled"}>
+          Minutes away <span class="muted">(${r?.minute_marks?.length ? "usual times to your stop" : "after the first recorded trip"})</span></label>
         <label><input type="checkbox" data-layer="today" ${this._layersOn.today ? "checked" : ""}> Today so far</label>
         <label><input type="checkbox" data-layer="heatmap" ${this._layersOn.heatmap ? "checked" : ""} ${trips ? "" : "disabled"}>
           Route heatmap <span class="muted">(${trips} trip${trips === 1 ? "" : "s"})</span></label>

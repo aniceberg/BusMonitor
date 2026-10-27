@@ -10,8 +10,11 @@ from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 
+from .calibration import suggest_checkpoints
 from .const import DOMAIN, OPT_PROFILES
 from .heatmap import route_heatmap
+
+MAX_MINUTE_MARKS = 30
 
 CHECKPOINT_SCHEMA = vol.Schema(
     {
@@ -116,6 +119,8 @@ def ws_route(hass: HomeAssistant, connection: websocket_api.ActiveConnection, ms
             else None,
             "today": [[la, lo] for _, la, lo, _ in coord.recorder.current_trail(msg["profile"])],
             "heatmap": route_heatmap(trips),
+            # Where the bus typically is N minutes before reaching the stop.
+            "minute_marks": suggest_checkpoints(trips, list(range(1, MAX_MINUTE_MARKS + 1))),
         },
     )
 

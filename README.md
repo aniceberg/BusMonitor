@@ -54,6 +54,8 @@ For each bus profile it shows:
 - the **checkpoints**: drag them to move them, add one by clicking the map or at the bus's
   current position, change the name/minutes/radius, untick *Announce* for a silent trial, then
   **Save changes** (administrators only);
+- **minutes-away clocks** along the route: each alarm clock marks where the bus usually is that many
+  minutes before your stop (every minute when zoomed in), so you can drop checkpoints exactly;
 - a **route heatmap** built from every recorded trip: the usual route is the darkest trace and
   occasional detours show lighter, depending on how often the bus takes them.
 

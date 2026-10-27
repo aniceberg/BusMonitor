@@ -279,6 +279,10 @@ async def test_panel_registered_and_websocket_api(hass: HomeAssistant, hass_ws_c
     route = (await ws.receive_json())["result"]
     assert route["trips"] == 1 and len(route["latest"]["path"]) == 10
     assert route["heatmap"]["cells"] and all(c[2] == 1.0 for c in route["heatmap"]["cells"])
+    # trail spans 135 s ending at arrival: 1 and 2 minutes before the stop are on it
+    marks = {m["minutes"]: m for m in route["minute_marks"]}
+    assert sorted(marks) == [1, 2]
+    assert marks[1]["lat"] > marks[2]["lat"]  # heading north: 1 min out is closer to the stop
 
     new = [{"label": "10 min", "minutes": 10, "lat": 39.97, "lon": -75.0, "radius_m": 50, "announce": True}]
     with patch("custom_components.bus_monitor.TraccarClient", return_value=entry.runtime_data.client):
