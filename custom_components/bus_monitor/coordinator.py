@@ -14,7 +14,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util
 
 from .alerts import TripTracker
-from .calibration import TrailRecorder, checkpoint_stats
+from .calibration import TrailRecorder, checkpoint_stats, typical_position
 from .const import (
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
@@ -35,6 +35,8 @@ _LOGGER = logging.getLogger(__name__)
 TRAIL_SAVE_INTERVAL_S = 60
 # Use measured checkpoint timings for 'running late' once this many trips exist.
 MIN_TRIPS_FOR_MEASURED_LEAD = 3
+# Auto-placed checkpoints stay where the user put them until this many trips exist.
+MIN_AUTO_TRIPS = 5
 
 
 class BusMonitorCoordinator(DataUpdateCoordinator[dict[int, Position]]):
@@ -69,6 +71,8 @@ class BusMonitorCoordinator(DataUpdateCoordinator[dict[int, Position]]):
         self.trackers: dict[str, TripTracker] = {}
         self.last_alert: dict[str, Alert] = {}
         self._saved_state: dict[str, dict | None] = {}
+        self._base_configs: dict[str, BusConfig] = {}
+        self.auto_positions: dict[str, dict[str, list]] = {}  # profile -> label -> [lat, lon, trips]
         self._last_save = 0.0
         for profile_id, raw in (entry.options.get(OPT_PROFILES) or {}).items():
             cfg = BusConfig.from_dict(profile_id, raw)
@@ -85,14 +89,46 @@ class BusMonitorCoordinator(DataUpdateCoordinator[dict[int, Position]]):
             if tracker := self.trackers.get(profile_id):
                 tracker.restore(snap, now.date())
         for tracker in self.trackers.values():
+            self._apply_auto_positions(tracker)
             self._update_leads(tracker)
         self._saved_state = self._state()
 
+    def _apply_auto_positions(self, tracker: TripTracker) -> None:
+        """Move auto-placed checkpoints to where the bus typically is N minutes out.
+
+        Works on the tracker's in-memory config only: the user's saved position stays
+        in the options as the fallback, and nothing reloads.
+        """
+        pid = tracker.config.profile_id
+        base = self._base_configs.get(pid, tracker.config)
+        self._base_configs[pid] = base
+        trips = self.recorder.trips_for(pid)
+        placed: dict[str, list] = {}
+        checkpoints = []
+        for cp in base.checkpoints:
+            pos = (
+                typical_position(trips, cp.minutes, min_trips=MIN_AUTO_TRIPS)
+                if cp.auto_place and cp.minutes and not cp.is_street
+                else None
+            )
+            if pos:
+                placed[cp.label] = [pos["lat"], pos["lon"], pos["trips"]]
+                cp = replace(cp, lat=pos["lat"], lon=pos["lon"])
+            checkpoints.append(cp)
+        self.auto_positions[pid] = placed
+        tracker.config = replace(base, checkpoints=tuple(checkpoints))
+
     def _update_leads(self, tracker: TripTracker) -> None:
-        """Give the tracker measured checkpoint-to-stop minutes once there's enough data."""
+        """Give the tracker measured checkpoint-to-stop minutes once there's enough data.
+
+        Auto-placed checkpoints keep their nominal minutes: they're placed *at* that
+        many minutes, and crossings recorded at their old spots would be stale.
+        """
         trips = self.recorder.trips_for(tracker.config.profile_id)
         leads = {}
         for cp in tracker.config.checkpoints:
+            if cp.auto_place or cp.is_street:
+                continue
             stats = checkpoint_stats(trips, cp.label)
             if stats and stats["count"] >= MIN_TRIPS_FOR_MEASURED_LEAD:
                 leads[cp.label] = stats["median"]
@@ -152,6 +188,7 @@ class BusMonitorCoordinator(DataUpdateCoordinator[dict[int, Position]]):
                         tracker.crossings,
                     )
                     save = save or record is not None
+                    self._apply_auto_positions(tracker)
                     self._update_leads(tracker)
         self._maybe_save(force=save)
         return data

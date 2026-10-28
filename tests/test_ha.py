@@ -370,3 +370,96 @@ async def test_measured_leads_need_three_trips(hass: HomeAssistant):
     coord.recorder.trips.append(trip(22))
     coord._update_leads(tracker)
     assert tracker.lead_minutes == {"5 min": 7.0}
+
+
+async def test_street_name_websocket(hass: HomeAssistant, hass_ws_client):
+    from custom_components.bus_monitor.streets import parse_overpass
+    from tests.test_streets import OVERPASS
+
+    await _setup(hass, _client([_pos(39.98, datetime.now(UTC))]))
+    geo = hass.data[DOMAIN]["geocoder"]
+    with patch.object(geo, "ways_near", AsyncMock(return_value=parse_overpass(OVERPASS))):
+        ws = await hass_ws_client(hass)
+        await ws.send_json({"id": 1, "type": "bus_monitor/street_name", "lat": 40.0004, "lon": -75.0, "bearing": 0})
+        res = (await ws.receive_json())["result"]
+    assert res["name"] == "3rd Street" and res["street"] == "Oak Ave"
+
+
+def _line_trip(day: int):
+    from custom_components.bus_monitor.calibration import TripRecord
+
+    t0 = datetime(2026, 10, day, 12, 0, tzinfo=UTC)
+    trail = [(t0 + timedelta(seconds=15 * i), 39.970 + i * 0.0005, -75.0, 5.0) for i in range(61)]
+    return TripRecord("morning", f"2026-10-{day:02d}", trail[-1][0], {}, trail)
+
+
+async def test_auto_placed_checkpoint_moves_to_typical_spot_without_reload(hass: HomeAssistant, hass_storage, hass_ws_client):
+    hass_storage["bus_monitor.trips.auto_test"] = {
+        "version": 1,
+        "key": "bus_monitor.trips.auto_test",
+        "data": {"trips": [_line_trip(d).as_dict() for d in range(13, 19)]},
+    }
+    profile = {
+        **PROFILE,
+        "checkpoints": [
+            {"label": "5 min", "minutes": 5, "lat": 39.95, "lon": -75.01, "radius_m": 60, "announce": True, "auto_place": True},
+            {"label": "Oak", "minutes": 0, "lat": 39.985, "lon": -75.0, "radius_m": 40, "announce": True, "kind": "street"},
+        ],
+    }
+    entry = MockConfigEntry(domain=DOMAIN, entry_id="auto_test", data={**CONN, "devices": [1]}, options={"profiles": {"morning": profile}})
+    entry.add_to_hass(hass)
+    with patch("custom_components.bus_monitor.TraccarClient", return_value=_client([_pos(39.9, datetime.now(UTC))])):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    cp = entry.runtime_data.trackers["morning"].config.checkpoints[0]
+    assert abs(cp.lat - 39.990) < 0.0002 and abs(cp.lon + 75.0) < 1e-6  # moved onto the route, 5 min out
+    assert entry.options["profiles"]["morning"]["checkpoints"][0]["lat"] == 39.95  # user's setting untouched
+    assert entry.runtime_data.trackers["morning"].lead_minutes == {}  # auto/street: nominal leads
+
+    ws = await hass_ws_client(hass)
+    await ws.send_json({"id": 1, "type": "bus_monitor/overview"})
+    cps = (await ws.receive_json())["result"]["profiles"][0]["checkpoints"]
+    assert cps[0]["auto_place"] and cps[0]["auto_trips"] == 6 and abs(cps[0]["lat"] - 39.990) < 0.0002
+    assert cps[1]["kind"] == "street" and cps[1]["auto_trips"] is None
+
+
+async def test_set_checkpoints_round_trips_kind_and_auto_place(hass: HomeAssistant, hass_ws_client):
+    entry = await _setup(hass, _client([_pos(39.98, datetime.now(UTC))]))
+    new = [
+        {"label": "10 min", "minutes": 10, "lat": 39.97, "lon": -75.0, "radius_m": 50, "announce": True, "kind": "time", "auto_place": True},
+        {"label": "Elm Street", "minutes": 0, "lat": 39.985, "lon": -75.0, "radius_m": 40, "announce": True, "kind": "street"},
+    ]
+    ws = await hass_ws_client(hass)
+    with patch("custom_components.bus_monitor.TraccarClient", return_value=entry.runtime_data.client):
+        await ws.send_json({"id": 1, "type": "bus_monitor/set_checkpoints", "profile": "morning", "checkpoints": new})
+        assert (await ws.receive_json())["success"]
+        await hass.async_block_till_done()
+    saved = entry.options["profiles"]["morning"]["checkpoints"]
+    assert [(c["kind"], c["auto_place"]) for c in saved] == [("time", True), ("street", False)]
+    cfg = entry.runtime_data.trackers["morning"].config
+    assert [c.kind for c in cfg.checkpoints] == ["time", "street"]
+
+
+async def test_street_name_falls_back_to_nominatim_cross_street(hass: HomeAssistant, hass_ws_client, aioclient_mock):
+    from custom_components.bus_monitor.geo import offset_point
+    from custom_components.bus_monitor.geocoder import NOMINATIM_URL, GeocodeError
+
+    await _setup(hass, _client([_pos(39.98, datetime.now(UTC))]))
+    lat, lon, bearing = 40.0, -75.0, 270.0  # heading west along Oak Avenue
+
+    def reply(la, lo, road):
+        params = {"format": "jsonv2", "lat": f"{la:.6f}", "lon": f"{lo:.6f}", "zoom": "17", "layer": "address"}
+        aioclient_mock.get(NOMINATIM_URL, params=params, json={"address": {"road": road}})
+
+    reply(lat, lon, "Oak Avenue")
+    reply(*offset_point(lat, lon, 0.0, 35), "East 5th Street")
+    geo = hass.data[DOMAIN]["geocoder"]
+    with (
+        patch.object(geo, "ways_near", AsyncMock(side_effect=GeocodeError("HTTP 504"))),
+        patch("custom_components.bus_monitor.geocoder.NOMINATIM_MIN_INTERVAL_S", 0),
+    ):
+        ws = await hass_ws_client(hass)
+        await ws.send_json({"id": 1, "type": "bus_monitor/street_name", "lat": lat, "lon": lon, "bearing": bearing})
+        res = (await ws.receive_json())["result"]
+    assert (res["name"], res["street"], res["source"]) == ("East 5th Street", "Oak Avenue", "nominatim")

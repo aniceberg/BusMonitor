@@ -63,14 +63,16 @@
       },
       "add_checkpoint": {
         "title": "Add an alert checkpoint",
-        "description": "When the bus passes this point heading toward the stop, an alert fires. Untick 'announce' to log it silently (shadow mode) and compare it with live checkpoints.",
+        "description": "Minutes-away checkpoints announce \"Bus 12 is about 10 minutes away\"; tick Auto-place to let recorded trips move it to where the bus usually is that many minutes out (from 5 trips). Street checkpoints announce \"Bus 12 is at Elm Street\"; leave the label blank to use the nearest cross street. Untick Announce to trial a spot silently.",
         "data": {
           "profile": "Profile",
-          "label": "Label",
+          "label": "Name (blank = automatic)",
           "minutes": "Approx. minutes from the stop",
           "location": "Checkpoint location and radius",
           "use_bus_position": "Use the bus's current position instead",
-          "announce": "Announce (untick for shadow mode)"
+          "announce": "Announce (untick for shadow mode)",
+          "kind": "Type",
+          "auto_place": "Auto-place from recorded trips (minutes-away only)"
         }
       },
       "remove": {
@@ -91,7 +93,8 @@
     },
     "error": {
       "location_required": "Pick a location, or tick 'use bus position'.",
-      "name_exists": "That name is already used."
+      "name_exists": "That name is already used.",
+      "street_lookup_failed": "Couldn't look up the street name. Type a name, or try again in a minute."
     },
     "abort": {
       "no_profiles": "Add a bus profile first."

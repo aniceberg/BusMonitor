@@ -38,6 +38,21 @@ function clockSvg(minutes, faded) {
   </svg>`;
 }
 
+// Short form for the map sign: "Elm Street" -> "Elm St".
+function shortStreet(name) {
+  return String(name || "")
+    .replace(/\bEast\b/g, "E")
+    .replace(/\bWest\b/g, "W")
+    .replace(/\bNorth\b/g, "N")
+    .replace(/\bSouth\b/g, "S")
+    .replace(/\bStreet\b/g, "St")
+    .replace(/\bAvenue\b/g, "Av")
+    .replace(/\bRoad\b/g, "Rd")
+    .replace(/\bBoulevard\b/g, "Blvd")
+    .replace(/\bPlace\b/g, "Pl")
+    .replace(/\bDrive\b/g, "Dr");
+}
+
 const esc = (s) =>
   String(s ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]);
 
@@ -130,6 +145,9 @@ class BusMonitorPanel extends HTMLElement {
         .cp .badge { width: 22px; height: 22px; flex: none; border-radius: 50%; display: grid; place-items: center;
                      background: #ffb700; color: #1e293b; font-weight: 700; font-size: 11px; border: 2px solid #1e293b; }
         .cp .badge.shadow { background: #cbd5e1; }
+        .cp .badge.street { background: #15803d; color: #fff; border-color: #14532d; border-radius: 4px; }
+        .cp select { font: inherit; padding: 3px 4px; border: 1px solid var(--divider-color); border-radius: 6px;
+                     background: var(--primary-background-color); color: var(--primary-text-color); }
         button { font: inherit; font-size: 14px; padding: 6px 12px; border-radius: 18px; cursor: pointer;
                  border: 1px solid var(--primary-color); background: transparent; color: var(--primary-color); }
         button.primary { background: var(--primary-color); color: var(--text-primary-color, #fff); }
@@ -143,7 +161,14 @@ class BusMonitorPanel extends HTMLElement {
         .cp-marker { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font: 700 12px/1 sans-serif;
                      background: #ffb700; color: #1e293b; border: 2px solid #1e293b; box-shadow: 0 1px 4px rgba(0,0,0,.4); }
         .cp-marker.shadow { background: #cbd5e1; }
-        .cp-marker.sel { outline: 3px solid var(--primary-color); }
+        .cp-marker.sel, .cp-street.sel { outline: 3px solid var(--primary-color); }
+        .cp-marker.auto { box-shadow: 0 0 0 2px #fff, 0 0 0 4px #2563eb, 0 1px 4px rgba(0,0,0,.4); position: relative; }
+        .cp-marker.auto::after { content: "A"; position: absolute; right: -9px; top: -9px; width: 14px; height: 14px; border-radius: 50%;
+                                 background: #2563eb; color: #fff; font: 700 9px/14px sans-serif; text-align: center; }
+        .cp-street { display: inline-block; transform: translate(-50%, -50%); white-space: nowrap; padding: 3px 7px;
+                     background: #15803d; color: #fff; font: 700 11px/1.1 Roboto, Arial, sans-serif; border-radius: 4px;
+                     border: 2px solid #fff; box-shadow: 0 0 0 1.5px #14532d, 0 1px 4px rgba(0,0,0,.45); }
+        .cp-street.shadow { background: #64748b; }
         .clock { display: block; filter: drop-shadow(0 1px 2px rgba(0,0,0,.35)); }
         .clock.faded { opacity: .55; }
         .stop-marker { width: 18px; height: 18px; border-radius: 4px; background: #e53935; border: 2px solid #fff;
@@ -355,20 +380,31 @@ class BusMonitorPanel extends HTMLElement {
 
   _drawCheckpoints() {
     this._cpLayer.clearLayers();
+    const p = this._profile() || { bus: "The bus" };
     this._draft.forEach((c, i) => {
+      const street = c.kind === "street";
+      const autoOn = !street && c.auto_place && c.auto_trips; // currently placed by recorded trips
       const circle = L.circle([c.lat, c.lon], {
         radius: c.radius_m,
-        color: c.announce === false ? "#64748b" : "#b45309",
+        color: c.announce === false ? "#64748b" : street ? "#15803d" : "#b45309",
         weight: 1,
         fillOpacity: 0.12,
         interactive: false,
       }).addTo(this._cpLayer);
-      const cls = `cp-marker${c.announce === false ? " shadow" : ""}${this._selIdx === i ? " sel" : ""}`;
+      const mods = `${c.announce === false ? " shadow" : ""}${this._selIdx === i ? " sel" : ""}${autoOn ? " auto" : ""}`;
+      const html = street
+        ? `<div class="cp-street${mods}">${esc(shortStreet(c.label))}</div>`
+        : `<div class="cp-marker${mods}">${esc(c.minutes || "•")}</div>`;
       const m = L.marker([c.lat, c.lon], {
-        draggable: this._canEdit,
-        icon: L.divIcon({ className: "", html: `<div class="${cls}">${esc(c.minutes || "•")}</div>`, iconSize: [26, 26] }),
+        draggable: this._canEdit && !autoOn,
+        zIndexOffset: 500,
+        icon: L.divIcon({ className: "", html, iconSize: street ? null : [26, 26], iconAnchor: street ? [0, 0] : undefined }),
       })
-        .bindTooltip(esc(c.label))
+        .bindTooltip(
+          street
+            ? `Street checkpoint: “${esc(p.bus)} is at ${esc(c.label)}.”`
+            : `${esc(c.label)}${autoOn ? ` · auto-placed from ${c.auto_trips} trips` : ""}`,
+        )
         .addTo(this._cpLayer);
       m.on("drag", (e) => circle.setLatLng(e.target.getLatLng()));
       m.on("dragend", (e) => {
@@ -423,17 +459,60 @@ class BusMonitorPanel extends HTMLElement {
   // ---------------------------------------------------------------- editing
   _mapClick(e) {
     if (!this._addMode) return;
+    const kind = this._addMode;
     this._addMode = false;
     this.shadowRoot.getElementById("mapwrap").classList.remove("adding");
-    this._addCheckpoint(e.latlng.lat, e.latlng.lng);
+    this._addCheckpoint(e.latlng.lat, e.latlng.lng, kind);
   }
 
-  _addCheckpoint(lat, lon) {
-    const used = new Set(this._draft.map((c) => c.minutes));
+  _uniqueLabel(base) {
+    let label = base;
+    for (let n = 2; this._draft.some((c) => c.label === label); n++) label = `${base} (${n})`;
+    return label;
+  }
+
+  // Direction of travel near a point, from the latest recorded trip (for "cross street").
+  _bearingNear(lat, lon) {
+    const path = this._route?.latest?.path || [];
+    if (path.length < 2) return null;
+    let best = 0;
+    let bestD = Infinity;
+    path.forEach(([la, lo], k) => {
+      const d = distanceM({ lat, lon }, { lat: la, lon: lo });
+      if (d < bestD) [best, bestD] = [k, d];
+    });
+    if (bestD > 150) return null;
+    const a = path[Math.max(0, best - 2)];
+    const b = path[Math.min(path.length - 1, best + 2)];
+    const y = Math.sin((b[1] - a[1]) * rad) * Math.cos(b[0] * rad);
+    const x = Math.cos(a[0] * rad) * Math.sin(b[0] * rad) - Math.sin(a[0] * rad) * Math.cos(b[0] * rad) * Math.cos((b[1] - a[1]) * rad);
+    return (Math.atan2(y, x) / rad + 360) % 360;
+  }
+
+  async _addCheckpoint(lat, lon, kind = "time") {
+    const point = { lat: +lat.toFixed(6), lon: +lon.toFixed(6), announce: true };
+    if (kind === "street") {
+      const cp = { ...point, kind: "street", label: this._uniqueLabel("Looking up street…"), minutes: 0, radius_m: 40, auto_place: false };
+      this._draft.push(cp);
+      this._selIdx = this._draft.length - 1;
+      this._layersOn.checkpoints = true;
+      this._markDirty();
+      let name = null;
+      let problem = null;
+      try {
+        const res = await this._hass.callWS({ type: "bus_monitor/street_name", lat, lon, bearing: this._bearingNear(lat, lon) });
+        name = res.name;
+      } catch (err) {
+        problem = err.message || String(err);
+      }
+      cp.label = this._uniqueLabel(name || "Street checkpoint");
+      this._markDirty(); // clears the message, so set it afterwards
+      if (problem || !name) this._setMsg(`Couldn't look up the street name${problem ? ` (${problem})` : ""}. Type it in.`, true);
+      return;
+    }
+    const used = new Set(this._draft.filter((c) => c.kind !== "street").map((c) => c.minutes));
     const minutes = [10, 5, 2, 15, 8, 3, 1].find((m) => !used.has(m)) ?? 1;
-    let label = `${minutes} minutes away`;
-    for (let n = 2; this._draft.some((c) => c.label === label); n++) label = `${minutes} minutes away (${n})`;
-    this._draft.push({ label, minutes, lat: +lat.toFixed(6), lon: +lon.toFixed(6), radius_m: 60, announce: true });
+    this._draft.push({ ...point, kind: "time", label: this._uniqueLabel(`${minutes} minutes away`), minutes, radius_m: 60, auto_place: true });
     this._selIdx = this._draft.length - 1;
     this._layersOn.checkpoints = true;
     this._markDirty();
@@ -464,6 +543,8 @@ class BusMonitorPanel extends HTMLElement {
           lon: c.lon,
           radius_m: Math.max(10, Math.min(1000, Number(c.radius_m) || 60)),
           announce: c.announce !== false,
+          kind: c.kind === "street" ? "street" : "time",
+          auto_place: c.kind !== "street" && !!c.auto_place,
         })),
       });
       this._dirty = false;
@@ -544,13 +625,37 @@ class BusMonitorPanel extends HTMLElement {
           (c, i) => `
         <div class="cp ${this._selIdx === i ? "sel" : ""}" data-i="${i}">
           <div class="row">
-            <span class="badge ${c.announce === false ? "shadow" : ""}">${esc(c.minutes || "•")}</span>
+            ${
+              c.kind === "street"
+                ? `<span class="badge street ${c.announce === false ? "shadow" : ""}">St</span>`
+                : `<span class="badge ${c.announce === false ? "shadow" : ""}">${esc(c.minutes || "•")}</span>`
+            }
             <input type="text" data-f="label" value="${esc(c.label)}" ${dis} aria-label="Name">
           </div>
           <div class="row">
-            <label>Minutes <input type="number" min="0" max="90" data-f="minutes" value="${esc(c.minutes)}" ${dis}></label>
+            <select data-f="kind" ${dis} aria-label="Type">
+              <option value="time" ${c.kind === "street" ? "" : "selected"}>Minutes away</option>
+              <option value="street" ${c.kind === "street" ? "selected" : ""}>Street</option>
+            </select>
+            ${
+              c.kind === "street"
+                ? ""
+                : `<label>Min <input type="number" min="1" max="90" data-f="minutes" value="${esc(c.minutes)}" ${dis}></label>`
+            }
             <label>Radius <input type="number" min="10" max="1000" step="5" data-f="radius_m" value="${esc(Math.round(c.radius_m))}" ${dis}> m</label>
           </div>
+          ${
+            c.kind === "street"
+              ? `<div class="row muted">Says: “${esc(p.bus)} is at ${esc(c.label)}.”</div>`
+              : `<div class="row"><label><input type="checkbox" data-f="auto_place" ${c.auto_place ? "checked" : ""} ${dis}> Auto-place</label>
+                 <span class="muted">${
+                   !c.auto_place
+                     ? "drag to place"
+                     : c.auto_trips
+                       ? `from ${c.auto_trips} trips (usual spot ${esc(c.minutes)} min out)`
+                       : `manual until ${p.min_auto_trips ?? 5} trips are recorded`
+                 }</span></div>`
+          }
           <div class="row">
             <label><input type="checkbox" data-f="announce" ${c.announce === false ? "" : "checked"} ${dis}> Announce</label>
             <span style="flex:1"></span>
@@ -562,8 +667,9 @@ class BusMonitorPanel extends HTMLElement {
       ${
         edit
           ? `<div class="actions">
-              <button data-act="add">${this._addMode ? "Click the map…" : "+ Add on map"}</button>
-              <button data-act="addbus" ${p.position ? "" : "disabled"}>+ Add at bus</button>
+              <button data-act="add-time">${this._addMode === "time" ? "Click the map…" : "+ Minutes checkpoint"}</button>
+              <button data-act="add-street">${this._addMode === "street" ? "Click the map…" : "+ Street checkpoint"}</button>
+              <button data-act="addbus" ${p.position ? "" : "disabled"}>+ At bus</button>
             </div>
             <div class="actions">
               <button class="primary" data-act="save" ${this._dirty && !this._saving ? "" : "disabled"}>${this._saving ? "Saving…" : "Save changes"}</button>
@@ -572,7 +678,8 @@ class BusMonitorPanel extends HTMLElement {
           : ""
       }
       <div class="msg ${this._msgErr ? "err" : ""}">${esc(this._msg || (this._dirty ? "Unsaved changes" : ""))}</div>
-      <div class="muted">Drag a checkpoint to move it. Untick "Announce" to trial a spot silently (shadow mode).</div>`;
+      <div class="muted">Drag a checkpoint to move it (auto-placed ones move themselves). Street checkpoints announce the street name.
+        Untick "Announce" to trial a spot silently (shadow mode).</div>`;
 
     side.querySelectorAll("input[data-layer]").forEach((el) =>
       el.addEventListener("change", () => {
@@ -586,23 +693,43 @@ class BusMonitorPanel extends HTMLElement {
       row.querySelectorAll("input[data-f]").forEach((el) =>
         el.addEventListener("change", () => {
           const f = el.dataset.f;
-          this._draft[i][f] = f === "announce" ? el.checked : f === "label" ? el.value : Number(el.value);
+          this._draft[i][f] = f === "announce" || f === "auto_place" ? el.checked : f === "label" ? el.value : Number(el.value);
           this._markDirty();
         }),
       );
+      row.querySelector('select[data-f="kind"]')?.addEventListener("change", async (e) => {
+        const c = this._draft[i];
+        c.kind = e.target.value;
+        if (c.kind === "street") {
+          c.minutes = 0;
+          c.auto_place = false;
+          try {
+            const res = await this._hass.callWS({ type: "bus_monitor/street_name", lat: c.lat, lon: c.lon, bearing: this._bearingNear(c.lat, c.lon) });
+            if (res.name) c.label = this._uniqueLabel(res.name);
+          } catch (err) {
+            /* keep the current name */
+          }
+        } else if (!c.minutes) {
+          c.minutes = 10;
+          c.label = this._uniqueLabel("10 minutes away");
+        }
+        this._markDirty();
+      });
       row.querySelector('[data-act="remove"]')?.addEventListener("click", () => {
         this._draft.splice(i, 1);
         this._selIdx = null;
         this._markDirty();
       });
     });
-    side.querySelector('[data-act="add"]')?.addEventListener("click", () => {
-      this._addMode = !this._addMode;
-      this._layersOn.checkpoints = true;
-      this.shadowRoot.getElementById("mapwrap").classList.toggle("adding", this._addMode);
-      this._applyLayers();
-      this._renderSide();
-    });
+    for (const kind of ["time", "street"]) {
+      side.querySelector(`[data-act="add-${kind}"]`)?.addEventListener("click", () => {
+        this._addMode = this._addMode === kind ? false : kind;
+        this._layersOn.checkpoints = true;
+        this.shadowRoot.getElementById("mapwrap").classList.toggle("adding", !!this._addMode);
+        this._applyLayers();
+        this._renderSide();
+      });
+    }
     side.querySelector('[data-act="addbus"]')?.addEventListener("click", () => {
       const st = p.tracker_entity && this._hass.states[p.tracker_entity];
       const lat = st?.attributes?.latitude ?? p.position?.lat;

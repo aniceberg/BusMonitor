@@ -70,3 +70,11 @@ def compass(deg: float) -> str:
     """Eight-point compass name for a bearing."""
     names = ("north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest")
     return names[int(((deg % 360) + 22.5) // 45) % 8]
+
+
+def offset_point(lat: float, lon: float, bearing: float, distance_m: float) -> tuple[float, float]:
+    """Point `distance_m` from (lat, lon) along `bearing` (fine for short distances)."""
+    b = math.radians(bearing)
+    dlat = distance_m * math.cos(b) / 111_320
+    dlon = distance_m * math.sin(b) / (111_320 * math.cos(math.radians(lat)))
+    return lat + dlat, lon + dlon

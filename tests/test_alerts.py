@@ -298,3 +298,27 @@ def test_late_without_checkpoints_falls_back_to_the_stop():
     tracker = _late_tracker(checkpoints=())
     late = _tick(tracker, 1, 50)
     assert [(a.kind, a.extra["stage"], a.time) for a in late] == [("late", "stop", _at(40))]
+
+
+# --- street checkpoints ------------------------------------------------------------
+
+def test_street_checkpoint_announces_street_alongside_time_checkpoint():
+    cps = (
+        Checkpoint("5 min", 39.990, STOP_LON, radius_m=100, minutes=5),
+        Checkpoint("Elm St", 39.9902, STOP_LON, radius_m=60, kind="street"),
+    )
+    tracker = TripTracker(make_config(checkpoints=cps, bus_name="Bus 12"))
+    alerts = run(tracker, northbound_trail())
+    kinds = [(a.label, a.extra.get("type")) for a in alerts]
+    assert ("5 min", "time") in kinds and ("Elm St", "street") in kinds
+    street = next(a for a in alerts if a.extra.get("type") == "street")
+    assert street.extra["street"] == "Elm St" and street.minutes is None
+    assert street.extra["message"] == "Bus 12 is at Elm Street."
+
+
+def test_street_checkpoints_are_not_part_of_running_late():
+    cps = (Checkpoint("Main St", 39.980, STOP_LON, radius_m=60, kind="street"),)
+    tracker = _late_tracker(checkpoints=cps)
+    assert tracker.due_times(_at(30)) == []
+    late = _tick(tracker, 1, 50)  # only the stop fallback applies
+    assert [a.extra["stage"] for a in late] == ["stop"]

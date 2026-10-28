@@ -106,3 +106,27 @@ def test_eta_uses_baseline_then_nominal():
     trip = TripRecord("am", "2026-10-12", MONDAY_7AM + timedelta(minutes=7), crossed, [])
     assert estimate_eta_min(crossed, cps, [trip], now) == 5  # measured 7 - 2 elapsed
     assert estimate_eta_min(crossed, cps, [], MONDAY_7AM + timedelta(minutes=30)) == 1  # clamped
+
+
+def test_nearest_cross_street_is_the_closer_one(ways):
+    near_3rd = describe_position(40.0004, -75.0, 0.0, ways)
+    assert (near_3rd.behind, near_3rd.ahead) == ("3rd St", "5th St")
+    assert near_3rd.nearest_cross == "3rd St"
+    near_5th = describe_position(40.0027, -75.0, 0.0, ways)
+    assert near_5th.nearest_cross == "5th St"
+
+
+def test_alert_message_for_every_kind():
+    from custom_components.bus_monitor.describe import alert_message
+    from custom_components.bus_monitor.models import Alert
+
+    def a(kind, minutes=None, **extra):
+        return Alert(kind, "am", 1, "Bus 12", "Morning", "x", minutes, MONDAY_7AM, extra=extra)
+
+    assert alert_message(a("checkpoint", 10, type="time")) == "Bus 12 is about 10 minutes away."
+    assert alert_message(a("checkpoint", 1, type="time")) == "Bus 12 is about 1 minute away."
+    assert alert_message(a("checkpoint", type="street", street="N Oak Ave")) == "Bus 12 is at North Oak Avenue."
+    assert alert_message(a("arrived")) == "Bus 12 has arrived."
+    assert alert_message(a("late", minutes_late=12)) == "Bus 12 is running about 12 minutes late."
+    assert alert_message(a("late")) == "Bus 12 is running late."
+    assert alert_message(a("offline")) == "Bus 12 has stopped reporting its location."

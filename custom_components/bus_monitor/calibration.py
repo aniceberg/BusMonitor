@@ -12,6 +12,10 @@ from .models import Position
 
 MIN_SAMPLE_INTERVAL = timedelta(seconds=10)
 RETENTION_DAYS = 60
+# typical_position ignores trips whose remaining distance differs from the median trip's
+# by more than this share of it (or this many metres, whichever is larger).
+OUTLIER_FRACTION = 0.25
+OUTLIER_MIN_M = 100.0
 # An in-progress trail older than this at startup belongs to an earlier trip.
 CURRENT_TRAIL_MAX_AGE = timedelta(hours=3)
 
@@ -154,35 +158,92 @@ def position_at(
     return None
 
 
+def _cumulative(trail: list[tuple[datetime, float, float, float]]) -> list[float]:
+    out = [0.0]
+    for (_, la1, lo1, _), (_, la2, lo2, _) in zip(trail, trail[1:], strict=False):
+        out.append(out[-1] + haversine_m(la1, lo1, la2, lo2))
+    return out
+
+
+def _remaining_at(trip: TripRecord, cum: list[float], when: datetime) -> float | None:
+    """Along-route metres still to go to the stop at `when` (trail ends at arrival)."""
+    trail = trip.trail
+    if not trail or when < trail[0][0] or when > trail[-1][0]:
+        return None
+    for k in range(1, len(trail)):
+        t1, t2 = trail[k - 1][0], trail[k][0]
+        if t1 <= when <= t2:
+            span = (t2 - t1).total_seconds()
+            f = 0.0 if span == 0 else (when - t1).total_seconds() / span
+            return cum[-1] - (cum[k - 1] + (cum[k] - cum[k - 1]) * f)
+    return None
+
+
+def _point_at_remaining(trip: TripRecord, cum: list[float], remaining: float) -> tuple[float, float] | None:
+    """The point on this trip's trail `remaining` metres (along the route) before the stop."""
+    target = cum[-1] - remaining
+    if target < 0:
+        return None
+    trail = trip.trail
+    for k in range(1, len(trail)):
+        if cum[k - 1] <= target <= cum[k]:
+            seg = cum[k] - cum[k - 1]
+            f = 0.0 if seg == 0 else (target - cum[k - 1]) / seg
+            return interpolate(trail[k - 1][1], trail[k - 1][2], trail[k][1], trail[k][2], f)
+    return None
+
+
+def typical_position(
+    trips: list[TripRecord], minutes: float, last_n: int = 20, min_trips: int = 1
+) -> dict[str, Any] | None:
+    """Where the bus usually is `minutes` before reaching the stop, robust to odd days.
+
+    1. For each trip, how far (along its own route) it still had to go at that time.
+    2. Average of the majority: trips whose distance is far from the median trip's
+       (a late-running or unusually early day) are left out, then the rest are
+       averaged. Up to just under half the trips can be odd without moving the spot.
+    3. On each remaining trip, the point that far from the stop; the coordinate-wise
+       median of those points sits on the usual road even if one trip detoured.
+    """
+    recent = sorted(trips, key=lambda t: t.date)[-last_n:]
+    samples = []
+    for t in recent:
+        cum = _cumulative(t.trail)
+        rem = _remaining_at(t, cum, t.arrival - timedelta(minutes=minutes))
+        if rem is not None:
+            samples.append((rem, t, cum))
+    if len(samples) < max(1, min_trips):
+        return None
+    med = statistics.median(s[0] for s in samples)
+    band = max(OUTLIER_FRACTION * med, OUTLIER_MIN_M)
+    kept = [s for s in samples if abs(s[0] - med) <= band]
+    if len(kept) * 2 < len(samples):  # no clear majority: just use the median trip
+        kept = sorted(samples, key=lambda s: abs(s[0] - med))[: max(1, len(samples) // 2)]
+    distance = statistics.fmean(s[0] for s in kept)
+    points = [p for _, t, cum in kept if (p := _point_at_remaining(t, cum, distance)) is not None]
+    if not points:
+        return None
+    lat = statistics.median(p[0] for p in points)
+    lon = statistics.median(p[1] for p in points)
+    spread = statistics.median(haversine_m(lat, lon, p[0], p[1]) for p in points)
+    return {
+        "minutes": minutes,
+        "lat": round(lat, 6),
+        "lon": round(lon, 6),
+        "trips": len(kept),
+        "spread_m": round(spread),
+        "distance_m": round(distance),
+    }
+
+
 def suggest_checkpoints(
     trips: list[TripRecord], target_minutes: list[int], last_n: int = 20
 ) -> list[dict[str, Any]]:
-    """For each target T, the typical place the bus was T minutes before arriving.
-
-    Uses the coordinate-wise median across trips (fine for a fixed route) and
-    reports `spread_m`, the median distance of individual trips from that
-    point; a large spread means the route varies and the suggestion is weak.
-    """
-    recent = sorted(trips, key=lambda t: t.date)[-last_n:]
-    out: list[dict[str, Any]] = []
-    for minutes in target_minutes:
-        points = [
-            p
-            for t in recent
-            if (p := position_at(t.trail, t.arrival - timedelta(minutes=minutes))) is not None
-        ]
-        if not points:
-            continue
-        lat = statistics.median(p[0] for p in points)
-        lon = statistics.median(p[1] for p in points)
-        spread = statistics.median(haversine_m(lat, lon, p[0], p[1]) for p in points)
-        out.append(
-            {
-                "minutes": minutes,
-                "lat": round(lat, 6),
-                "lon": round(lon, 6),
-                "trips": len(points),
-                "spread_m": round(spread),
-            }
-        )
-    return out
+    """For each target T, the typical place the bus was T minutes before arriving
+    (see `typical_position`). `spread_m` is how far individual trips were from it;
+    a large spread means the route varies there and the suggestion is weak."""
+    return [
+        p
+        for minutes in target_minutes
+        if (p := typical_position(trips, minutes, last_n=last_n)) is not None
+    ]

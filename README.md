@@ -34,11 +34,12 @@ School-bus arrival alerts for Home Assistant, fed by a **Traccar** GPS server
 ## Announce on Google Home
 Every alert fires a `bus_monitor_alert` event. Create an automation with an **Event** trigger
 for `bus_monitor_alert` and a **Text-to-speech: Speak** action that targets your Google Home
-speakers. Use the event data below to build the message (for example, say the bus number and
-`minutes` for a `checkpoint` alert).
+speakers, with the message set to `{{ trigger.event.data.message }}`. Every alert carries a
+ready-to-speak sentence, e.g. "Bus 12 is about 10 minutes away.", "Bus 12 is at Elm Street.",
+"Bus 12 has arrived." or "Bus 12 is running about 12 minutes late."
 
-Event data: `kind`, `bus` (e.g. "Bus 12"), `profile`, `profile_name`, `device_id`, `label`, `minutes`, `time`,
-`latitude`, `longitude`. Late alerts also carry `checkpoint` (the first missed one), `due` and `minutes_late`.
+Event data: `message`, `kind`, `type` (`time`/`street` for checkpoints), `bus` (e.g. "Bus 12"), `profile`,
+`profile_name`, `device_id`, `label`, `minutes`, `street`, `time`, `latitude`, `longitude`. Late alerts also carry `checkpoint` (the first missed one), `due` and `minutes_late`.
 
 **Running late** is announced once per trip, and only when the bus is more than the profile's
 "minutes behind schedule" past the time it's due at a checkpoint and hasn't reached that checkpoint,
@@ -51,9 +52,17 @@ Shadow crossings fire `bus_monitor_shadow` instead.
 Bus Monitor adds a **Bus Monitor** page to the sidebar (turn it off under Configure → Settings).
 For each bus profile it shows:
 - your stop, the bus's live position, the latest recorded trip and today's trip so far;
-- the **checkpoints**: drag them to move them, add one by clicking the map or at the bus's
-  current position, change the name/minutes/radius, untick *Announce* for a silent trial, then
-  **Save changes** (administrators only);
+- the **checkpoints**, in two types:
+  - **Minutes away** ("Bus 12 is about 10 minutes away"). Tick **Auto-place** and, once 5 trips are
+    recorded, the checkpoint moves itself to where the bus usually is that many minutes before your
+    stop. Late-running or detour days are left out (only the trips that agree with the typical one are
+    averaged), and the position updates after every trip.
+  - **Street** ("Bus 12 is at Elm Street"): named after the nearest cross street automatically
+    (editable); not part of the late check.
+
+  Drag manual checkpoints to move them, add one by clicking the map or at the bus's current position,
+  change name/minutes/radius, untick *Announce* for a silent trial, then **Save changes**
+  (administrators only);
 - **minutes-away clocks** along the route: each alarm clock marks where the bus usually is that many
   minutes before your stop (every minute when zoomed in), so you can drop checkpoints exactly;
 - a **route heatmap** built from every recorded trip: the usual route is the darkest trace and

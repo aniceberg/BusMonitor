@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 
+from .describe import alert_message
 from .geo import angle_diff_deg, bearing_deg, distance_to_segment_m, haversine_m
 from .models import Alert, BusConfig, Checkpoint, Position
 
@@ -120,8 +121,10 @@ class TripTracker:
         heading_ok = self._heading_ok(heading, pos)
 
         for announce in (True, False):
-            group = [c for c in cfg.checkpoints if c.announce is announce]
+            group = [c for c in cfg.checkpoints if c.announce is announce and not c.is_street]
             alerts.extend(self._process_checkpoints(group, prev, pos, heading_ok, announce))
+        streets = [c for c in cfg.checkpoints if c.is_street]
+        alerts.extend(self._process_streets(streets, prev, pos, heading_ok))
 
         if stop is not None and self._crossed(stop.lat, stop.lon, stop.radius_m, prev, pos):
             self.arrival_time = pos.fix_time
@@ -158,7 +161,7 @@ class TripTracker:
         """When the bus is due at each announced checkpoint, farthest first."""
         out = []
         for c in self.config.checkpoints:
-            if not c.announce:
+            if not c.announce or c.is_street:
                 continue
             lead = self.lead_minutes.get(c.label) or c.minutes
             if lead:
@@ -268,6 +271,38 @@ class TripTracker:
             )
         ]
 
+    def _process_streets(
+        self, group: list[Checkpoint], prev: Position | None, pos: Position, heading_ok: bool
+    ) -> list[Alert]:
+        """Street checkpoints: "Bus 12 is at Elm Street". Independent of the
+        minutes checkpoints, and of each other except that one update announces at
+        most one street (the one nearest the bus)."""
+        if not heading_ok:
+            return []
+        crossed = [
+            c
+            for c in group
+            if c.label not in self.fired and self._crossed(c.lat, c.lon, c.radius_m, prev, pos)
+        ]
+        if not crossed:
+            return []
+        for c in crossed:
+            self.fired.add(c.label)
+            self.crossings.setdefault(c.label, pos.fix_time)
+        live = [c for c in crossed if c.announce]
+        chosen = min(live or crossed, key=lambda c: haversine_m(pos.lat, pos.lon, c.lat, c.lon))
+        return [
+            self._alert(
+                "checkpoint",
+                chosen.label,
+                None,
+                pos.fix_time,
+                pos,
+                {"type": "street", "street": chosen.label},
+                announce=chosen.announce,
+            )
+        ]
+
     @staticmethod
     def _crossed(
         lat: float, lon: float, radius_m: float, prev: Position | None, pos: Position
@@ -301,7 +336,7 @@ class TripTracker:
         extra: dict | None = None,
         announce: bool = True,
     ) -> Alert:
-        return Alert(
+        alert = Alert(
             kind=kind,
             profile_id=self.config.profile_id,
             device_id=self.config.device_id,
@@ -315,3 +350,6 @@ class TripTracker:
             announce=announce,
             extra=extra or {},
         )
+        alert.extra.setdefault("type", "time" if kind == "checkpoint" else kind)
+        alert.extra["message"] = alert_message(alert)
+        return alert

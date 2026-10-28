@@ -7,7 +7,7 @@ from datetime import datetime
 
 from .calibration import TripRecord, checkpoint_stats
 from .geo import compass
-from .models import Checkpoint
+from .models import Alert, Checkpoint
 from .streets import MAX_ON_STREET_M, StreetInfo
 
 _SUFFIXES = {
@@ -115,3 +115,24 @@ def compose(
     if eta_min is not None:
         sentence += f", roughly {eta_min} minute{'s' if eta_min != 1 else ''} away"
     return f"{prefix}{sentence}."
+
+
+def alert_message(alert: Alert) -> str:
+    """The sentence to speak for an alert (sent as the event's `message`)."""
+    bus = alert.bus_name
+    if alert.kind == "checkpoint":
+        if alert.extra.get("type") == "street":
+            return f"{bus} is at {speakable(alert.extra.get('street') or alert.label)}."
+        if alert.minutes:
+            return f"{bus} is about {alert.minutes} minute{'s' if alert.minutes != 1 else ''} away."
+        return f"{bus} is getting close ({alert.label})."
+    if alert.kind == "arrived":
+        return f"{bus} has arrived."
+    if alert.kind == "late":
+        late = alert.extra.get("minutes_late")
+        if late:
+            return f"{bus} is running about {late} minute{'s' if late != 1 else ''} late."
+        return f"{bus} is running late."
+    if alert.kind == "offline":
+        return f"{bus} has stopped reporting its location."
+    return f"{bus}: {alert.label}."

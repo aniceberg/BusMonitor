@@ -8,6 +8,9 @@ from typing import Any
 
 from .geo import KNOTS_TO_MPS
 
+KIND_TIME = "time"
+KIND_STREET = "street"
+
 
 @dataclass(frozen=True)
 class Position:
@@ -45,7 +48,11 @@ def parse_traccar_time(value: str) -> datetime:
 
 @dataclass(frozen=True)
 class Checkpoint:
-    """A place that, when the bus passes it, means 'about N minutes away'."""
+    """A place on the route that triggers an announcement when the bus enters it.
+
+    kind "time":   "about N minutes away"; `auto_place` lets recorded trips position it.
+    kind "street": "Bus 12 is at <label>" (label is a street name, minutes unused).
+    """
 
     label: str
     lat: float
@@ -53,6 +60,12 @@ class Checkpoint:
     radius_m: float = 150.0
     minutes: int = 0  # nominal minutes-to-stop; 0 means unspecified
     announce: bool = True  # False = shadow mode (logged, never alerted)
+    kind: str = KIND_TIME
+    auto_place: bool = False
+
+    @property
+    def is_street(self) -> bool:
+        return self.kind == KIND_STREET
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Checkpoint:
@@ -63,6 +76,8 @@ class Checkpoint:
             radius_m=float(data.get("radius_m", 150.0)),
             minutes=int(data.get("minutes", 0)),
             announce=bool(data.get("announce", True)),
+            kind=KIND_STREET if data.get("kind") == KIND_STREET else KIND_TIME,
+            auto_place=bool(data.get("auto_place", False)) and data.get("kind") != KIND_STREET,
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -73,6 +88,8 @@ class Checkpoint:
             "radius_m": self.radius_m,
             "minutes": self.minutes,
             "announce": self.announce,
+            "kind": self.kind,
+            "auto_place": self.auto_place,
         }
 
 

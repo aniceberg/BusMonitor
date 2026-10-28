@@ -27,6 +27,9 @@ from .const import (
     OPT_SCAN_INTERVAL,
     OPT_SHOW_PANEL,
 )
+from .geocoder import GeocodeError
+from .locator import async_street_name
+from .models import KIND_STREET, KIND_TIME
 from .traccar_client import CannotConnect, Device, InvalidAuth, TraccarClient
 
 WEEKDAY_OPTIONS = [
@@ -186,6 +189,13 @@ class BusMonitorOptionsFlow(OptionsFlow):
         pos = coord.data.get(device_id) if coord and coord.data else None
         return {"latitude": pos.lat, "longitude": pos.lon} if pos else None
 
+    async def _street_name(self, lat: float, lon: float) -> str:
+        """Nearest cross street for a street checkpoint, or "" if the lookup fails."""
+        try:
+            return (await async_street_name(self.hass, lat, lon, None)).get("name") or ""
+        except GeocodeError:
+            return ""
+
     def _resolve_location(self, user_input: dict[str, Any], device_id: int) -> dict[str, Any] | None:
         """Map pick, or the bus's position if requested; the map's radius is kept either way."""
         loc = user_input.get("location")
@@ -294,20 +304,32 @@ class BusMonitorOptionsFlow(OptionsFlow):
         if user_input is not None:
             profile = profiles[user_input["profile"]]
             loc = self._resolve_location(user_input, profile["device_id"])
+            street = user_input.get("kind") == KIND_STREET
+            label = (user_input.get("label") or "").strip()
+            if loc and not label:
+                label = (
+                    await self._street_name(loc["latitude"], loc["longitude"])
+                    if street
+                    else f"{int(user_input['minutes'])} minutes away"
+                )
             if not loc:
                 errors["base"] = "location_required"
-            elif any(c["label"] == user_input["label"] for c in profile["checkpoints"]):
+            elif not label:
+                errors["base"] = "street_lookup_failed"
+            elif any(c["label"] == label for c in profile["checkpoints"]):
                 errors["label"] = "name_exists"
             else:
                 profile["checkpoints"] = [
                     *profile["checkpoints"],
                     {
-                        "label": user_input["label"],
-                        "minutes": int(user_input["minutes"]),
+                        "label": label,
+                        "minutes": 0 if street else int(user_input["minutes"]),
                         "lat": loc["latitude"],
                         "lon": loc["longitude"],
-                        "radius_m": loc.get("radius", 150),
+                        "radius_m": loc.get("radius", 60 if street else 150),
                         "announce": bool(user_input["announce"]),
+                        "kind": KIND_STREET if street else KIND_TIME,
+                        "auto_place": bool(user_input.get("auto_place")) and not street,
                     },
                 ]
                 return self._save(profiles)
@@ -319,12 +341,21 @@ class BusMonitorOptionsFlow(OptionsFlow):
                     vol.Required("profile"): selector.SelectSelector(
                         selector.SelectSelectorConfig(options=self._profile_options())
                     ),
-                    vol.Required("label", default="10 minutes away"): str,
+                    vol.Required("kind", default=KIND_TIME): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=[
+                                selector.SelectOptionDict(value=KIND_TIME, label="Minutes away"),
+                                selector.SelectOptionDict(value=KIND_STREET, label="Street (announce the cross street)"),
+                            ]
+                        )
+                    ),
+                    vol.Optional("label", default=""): str,
                     vol.Required("minutes", default=10): vol.All(
                         vol.Coerce(int), vol.Range(min=1, max=90)
                     ),
                     vol.Optional("location"): _location_selector(),
                     vol.Optional("use_bus_position", default=False): bool,
+                    vol.Required("auto_place", default=True): bool,
                     vol.Required("announce", default=True): bool,
                 }
             ),

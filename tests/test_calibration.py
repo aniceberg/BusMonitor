@@ -84,3 +84,49 @@ def test_stale_trail_from_an_earlier_trip_is_dropped():
     rec.add_point("am", Position(1, 39.91, -75.0, yesterday + timedelta(seconds=30)))
     rec.add_point("am", Position(1, 39.97, -75.0, MONDAY_7AM))
     assert [p[0] for p in rec.current_trail("am")] == [MONDAY_7AM]
+
+
+# --- typical_position (auto-placement) ---------------------------------------------
+
+from custom_components.bus_monitor.calibration import typical_position  # noqa: E402
+from custom_components.bus_monitor.geo import haversine_m  # noqa: E402
+
+
+def _straight_trip(day: int, seconds_per_step: float = 15, detour: bool = False):
+    """North along lon -75 from 39.97 to 40.0 in 0.0005 deg steps; arrival at the end."""
+    t0 = MONDAY_7AM + timedelta(days=day)
+    trail = []
+    for i in range(61):
+        lat = 39.970 + i * 0.0005
+        lon = -74.996 if detour and 20 <= i <= 30 else -75.0  # ~340 m east for a while
+        trail.append((t0 + timedelta(seconds=seconds_per_step * i), lat, lon, 5.0))
+    return TripRecord("am", (t0.date()).isoformat(), trail[-1][0], {}, trail)
+
+
+def test_typical_position_on_route_with_consistent_trips():
+    trips = [_straight_trip(d) for d in range(6)]
+    p = typical_position(trips, 5, min_trips=5)
+    # 5 min = 20 steps before arrival => lat 40.0 - 20*0.0005 = 39.990
+    assert abs(p["lat"] - 39.990) < 0.0002 and abs(p["lon"] + 75.0) < 1e-6
+    assert p["trips"] == 6  # all agree
+
+
+def test_typical_position_ignores_a_few_late_running_trips():
+    normal = [_straight_trip(d) for d in range(6)]
+    slow = [_straight_trip(10 + d, seconds_per_step=30) for d in range(2)]  # crawling: twice as slow
+    base = typical_position(normal, 5, min_trips=5)
+    mixed = typical_position(normal + slow, 5, min_trips=5)
+    assert haversine_m(base["lat"], base["lon"], mixed["lat"], mixed["lon"]) < 30
+    assert mixed["trips"] == 6  # the two slow days were left out
+
+
+def test_typical_position_stays_on_the_usual_road_despite_a_detour():
+    trips = [_straight_trip(d) for d in range(6)] + [_straight_trip(9, detour=True)]
+    p = typical_position(trips, 5, min_trips=5)
+    assert abs(p["lon"] + 75.0) < 1e-6  # not pulled east
+
+
+def test_typical_position_needs_enough_trips():
+    trips = [_straight_trip(d) for d in range(4)]
+    assert typical_position(trips, 5, min_trips=5) is None
+    assert typical_position(trips, 5) is not None  # clocks show from the first trip

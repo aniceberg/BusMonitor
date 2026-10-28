@@ -127,3 +127,36 @@ class OverpassGeocoder:
             raise GeocodeError("timed out") from err
         except (aiohttp.ClientError, ValueError) as err:
             raise GeocodeError(str(err) or type(err).__name__) from err
+
+
+# --- Nominatim fallback (single nearest road; used only when setting up street checkpoints)
+NOMINATIM_URL = "https://nominatim.openstreetmap.org/reverse"
+NOMINATIM_MIN_INTERVAL_S = 1.1  # usage policy: at most 1 request per second
+_nominatim_lock = asyncio.Lock()
+_nominatim_last = 0.0
+
+
+async def nominatim_road(session: aiohttp.ClientSession, lat: float, lon: float) -> str | None:
+    """Name of the road nearest to a point, from OpenStreetMap Nominatim."""
+    global _nominatim_last
+    async with _nominatim_lock:
+        wait = NOMINATIM_MIN_INTERVAL_S - (time.monotonic() - _nominatim_last)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        try:
+            async with session.get(
+                NOMINATIM_URL,
+                params={"format": "jsonv2", "lat": f"{lat:.6f}", "lon": f"{lon:.6f}", "zoom": "17", "layer": "address"},
+                headers={"User-Agent": USER_AGENT},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status != 200:
+                    raise GeocodeError(f"HTTP {resp.status}")
+                data = await resp.json(content_type=None)
+        except TimeoutError as err:
+            raise GeocodeError("timed out") from err
+        except (aiohttp.ClientError, ValueError) as err:
+            raise GeocodeError(str(err) or type(err).__name__) from err
+        finally:
+            _nominatim_last = time.monotonic()
+    return (data.get("address") or {}).get("road") or data.get("name") or None

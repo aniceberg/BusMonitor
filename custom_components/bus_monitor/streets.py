@@ -27,6 +27,15 @@ class StreetInfo:
     ahead: str | None  # nearest cross street coming up
     directional: bool  # False when heading was unknown (behind/ahead is arbitrary)
     distance_m: float | None  # distance from the street centre line
+    behind_m: float | None = None  # distance to the cross street behind
+    ahead_m: float | None = None  # distance to the cross street ahead
+
+    @property
+    def nearest_cross(self) -> str | None:
+        """The closer of the two cross streets (or whichever one is known)."""
+        if self.behind and self.ahead:
+            return self.behind if (self.behind_m or 0) <= (self.ahead_m or 0) else self.ahead
+        return self.behind or self.ahead
 
 
 def parse_overpass(data: dict[str, Any]) -> list[Way]:
@@ -121,4 +130,6 @@ def describe_position(
         ahead=ahead[1] if ahead else None,
         directional=directional,
         distance_m=dist,
+        behind_m=round(behind[0], 1) if behind else None,
+        ahead_m=round(ahead[0], 1) if ahead else None,
     )

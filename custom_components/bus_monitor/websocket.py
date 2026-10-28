@@ -12,7 +12,11 @@ from homeassistant.helpers import entity_registry as er
 
 from .calibration import suggest_checkpoints
 from .const import DOMAIN, OPT_PROFILES
+from .coordinator import MIN_AUTO_TRIPS
+from .geocoder import GeocodeError
 from .heatmap import route_heatmap
+from .locator import async_street_name
+from .models import KIND_STREET, KIND_TIME
 
 MAX_MINUTE_MARKS = 30
 
@@ -24,6 +28,8 @@ CHECKPOINT_SCHEMA = vol.Schema(
         vol.Required("lon"): vol.All(vol.Coerce(float), vol.Range(min=-180, max=180)),
         vol.Required("radius_m"): vol.All(vol.Coerce(float), vol.Range(min=10, max=1000)),
         vol.Optional("announce", default=True): bool,
+        vol.Optional("kind", default=KIND_TIME): vol.In([KIND_TIME, KIND_STREET]),
+        vol.Optional("auto_place", default=False): bool,
     }
 )
 
@@ -36,6 +42,7 @@ def async_register_websocket(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_overview)
     websocket_api.async_register_command(hass, ws_route)
     websocket_api.async_register_command(hass, ws_set_checkpoints)
+    websocket_api.async_register_command(hass, ws_street_name)
     data["ws_registered"] = True
 
 
@@ -67,7 +74,15 @@ def ws_overview(hass: HomeAssistant, connection: websocket_api.ActiveConnection,
                         "device_tracker", DOMAIN, f"{entry.entry_id}_{cfg.device_id}_tracker"
                     ),
                     "stop": cfg.stop.as_dict() if cfg.stop else None,
-                    "checkpoints": [c.as_dict() for c in cfg.checkpoints],
+                    # effective positions (auto-placed ones where they currently are)
+                    "checkpoints": [
+                        {
+                            **c.as_dict(),
+                            "auto_trips": (coord.auto_positions.get(pid, {}).get(c.label) or [None] * 3)[2],
+                        }
+                        for c in cfg.checkpoints
+                    ],
+                    "min_auto_trips": MIN_AUTO_TRIPS,
                     "window": [
                         cfg.active_start.isoformat(timespec="minutes"),
                         cfg.active_end.isoformat(timespec="minutes"),
@@ -152,3 +167,24 @@ async def ws_set_checkpoints(
     ]
     hass.config_entries.async_update_entry(entry, options={**entry.options, OPT_PROFILES: profiles})
     connection.send_result(msg["id"], {"saved": len(labels)})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "bus_monitor/street_name",
+        vol.Required("lat"): vol.Coerce(float),
+        vol.Required("lon"): vol.Coerce(float),
+        vol.Optional("bearing"): vol.Any(None, vol.Coerce(float)),
+    }
+)
+@websocket_api.async_response
+async def ws_street_name(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict
+) -> None:
+    """Name for a street checkpoint: the nearest cross street to the point."""
+    try:
+        result = await async_street_name(hass, msg["lat"], msg["lon"], msg.get("bearing"))
+    except GeocodeError as err:
+        connection.send_error(msg["id"], "lookup_failed", f"Street lookup failed: {err}")
+        return
+    connection.send_result(msg["id"], result)
