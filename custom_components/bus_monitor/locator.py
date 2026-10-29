@@ -7,7 +7,9 @@ import logging
 from typing import Any
 
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.update_coordinator import UpdateFailed
 from homeassistant.util import dt as dt_util
 from homeassistant.util.unit_system import US_CUSTOMARY_SYSTEM
 
@@ -26,6 +28,12 @@ async def async_describe(
 ) -> dict[str, Any]:
     tracker = coordinator.trackers[profile]
     cfg = tracker.config
+    if not coordinator.needs_positions(dt_util.now()):
+        # Not polling right now (outside the watch window, or the bus has arrived).
+        try:
+            await coordinator.async_fetch_now()
+        except (UpdateFailed, ConfigEntryAuthFailed) as err:
+            _LOGGER.warning("Couldn't refresh the bus position: %s", err)
     pos = (coordinator.data or {}).get(cfg.device_id)
     if pos is None:
         return {"text": f"{cfg.bus_name or cfg.name} has no known location right now.", "known": False}

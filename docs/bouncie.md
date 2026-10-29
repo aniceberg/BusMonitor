@@ -37,8 +37,10 @@ time, Home Assistant shows a **Reauthenticate** prompt. Sign in to the *same* Bo
 
 ## How fresh are the positions?
 Bus Monitor asks Bouncie for each vehicle's last known location every 30 seconds by default (the
-minimum is 15; change it under Configure → Settings). Bouncie doesn't document how often that
-location refreshes while the vehicle is driving. To measure it, run the probe during a drive:
+minimum is 15; change it under Configure → Settings). It only does this while a profile is
+watching: inside its watch window, until the bus reaches the stop. Outside that it doesn't call
+Bouncie at all, except once when you ask "where is the bus?". Bouncie doesn't document how often
+that location refreshes while the vehicle is driving. To measure it, run the probe during a drive:
 
 ```bash
 BOUNCIE_TOKEN=<access token> .venv/bin/python scripts/bouncie_probe.py 10 30
