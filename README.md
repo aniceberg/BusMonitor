@@ -36,6 +36,9 @@ Bouncie login). Each bus profile follows one vehicle from its entry.
 4. Configure -> **Add a bus profile**, then **Add an alert checkpoint** (repeat per alert).
    Use **Edit a bus profile** later to rename it or change its bus, stop or schedule; its
    checkpoints, recorded trips and entity IDs are kept.
+   *Announce as* (optional) sets what alerts and "where is the bus?" call the bus, e.g.
+   "Daniel's bus"; otherwise the vehicle's name is used ("Bus" is added before a route number
+   such as "12").
    Tip: tick *Use the bus's current position* while the bus is at the spot you want.
 
 > Security (Traccar): the server only speaks plain HTTP and the login is shared by all parents, so
@@ -49,7 +52,7 @@ speakers, with the message set to `{{ trigger.event.data.message }}`. Every aler
 ready-to-speak sentence, e.g. "Bus 12 is about 10 minutes away.", "Bus 12 is at Elm Street.",
 "Bus 12 has arrived." or "Bus 12 is running about 12 minutes late."
 
-Event data: `message`, `kind`, `type` (`time`/`street` for checkpoints), `bus` (e.g. "Bus 12"), `profile`,
+Event data: `message`, `kind`, `type` (`time`/`street` for checkpoints), `bus` (the *Announce as* name, else e.g. "Bus 12"), `profile`,
 `profile_name`, `device_id`, `label`, `minutes`, `street`, `time`, `latitude`, `longitude`. Late alerts also carry `checkpoint` (the first missed one), `due` and `minutes_late`.
 
 **Running late** is announced once per trip, and only when the bus is more than the profile's

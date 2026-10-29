@@ -74,6 +74,7 @@
         "description": "Pick the stop on the map, or tick 'use bus position' to use where the bus is right now. Make one profile for the morning and another for the afternoon if the times differ.",
         "data": {
           "name": "Profile name",
+          "announce_as": "Announce as (optional)",
           "device": "Bus",
           "location": "Stop location and arrival radius",
           "use_bus_position": "Use the bus's current position instead",
@@ -83,6 +84,9 @@
           "active_end": "Watch until",
           "weekdays": "Days",
           "offline_after_min": "Alert if no GPS fix for N minutes (0 = off)"
+        },
+        "data_description": {
+          "announce_as": "What alerts and \"where is the bus?\" call this bus, e.g. \"Daniel's bus\". Leave empty to use the vehicle's name."
         }
       },
       "edit_profile": {
@@ -96,6 +100,7 @@
         "description": "Change the name, bus, stop or schedule. Checkpoints, recorded trips and entity IDs are kept, and scripts keep working with profile: {profile_id}.",
         "data": {
           "name": "Profile name",
+          "announce_as": "Announce as (optional)",
           "device": "Bus",
           "location": "Stop location and arrival radius",
           "use_bus_position": "Use the bus's current position instead",
@@ -105,6 +110,9 @@
           "active_end": "Watch until",
           "weekdays": "Days",
           "offline_after_min": "Alert if no GPS fix for N minutes (0 = off)"
+        },
+        "data_description": {
+          "announce_as": "What alerts and \"where is the bus?\" call this bus, e.g. \"Daniel's bus\". Leave empty to use the vehicle's name."
         }
       },
       "add_checkpoint": {
@@ -139,7 +147,7 @@
     },
     "error": {
       "location_required": "Pick a location, or tick 'use bus position'.",
-      "name_exists": "That name is already used.",
+      "name_exists": "That name is already used by another bus profile.",
       "street_lookup_failed": "Couldn't look up the street name. Type a name, or try again in a minute."
     },
     "abort": {

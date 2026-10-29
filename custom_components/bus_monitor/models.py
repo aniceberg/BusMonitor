@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, time
 from typing import Any
@@ -174,6 +175,7 @@ class BusConfig:
             active_end=time.fromisoformat(data.get("active_end", "09:30")),
             weekdays=tuple(data.get("weekdays", (0, 1, 2, 3, 4))),
             offline_after_min=int(data.get("offline_after_min", 0)),
+            bus_name=str(data.get("announce_as") or "").strip(),
         )
 
 
@@ -211,6 +213,9 @@ class Alert:
 
 
 def bus_label(device_name: str) -> str:
-    """How to say a vehicle name: '12' -> 'Bus 12', 'Bus 7' stays as is."""
+    """How to say a vehicle name: a route number gets "Bus" ('12' -> 'Bus 12', '18 Orange' ->
+    'Bus 18 Orange'); other names are said as is ('Bus 7', "Oleg's bus", 'Carpool van')."""
     name = device_name.strip()
-    return name if name.lower().startswith("bus") else f"Bus {name}"
+    if name[:1].isdigit() and not re.search(r"\bbus\b", name, re.IGNORECASE):
+        return f"Bus {name}"
+    return name

@@ -295,6 +295,7 @@ class BusMonitorOptionsFlow(OptionsFlow):
         return vol.Schema(
             {
                 vol.Required("name"): str,
+                vol.Optional("announce_as"): str,
                 vol.Required("device"): selector.SelectSelector(
                     selector.SelectSelectorConfig(options=self._device_options())
                 ),
@@ -322,6 +323,7 @@ class BusMonitorOptionsFlow(OptionsFlow):
         return {
             "device_id": str(user_input["device"]),
             "name": user_input["name"],
+            "announce_as": (user_input.get("announce_as") or "").strip(),
             "stop": {
                 "lat": loc["latitude"],
                 "lon": loc["longitude"],
@@ -335,6 +337,17 @@ class BusMonitorOptionsFlow(OptionsFlow):
             "offline_after_min": int(user_input["offline_after_min"]),
         }
 
+    def _taken_names(self, except_id: str | None = None) -> set[str]:
+        """Profile ids and name slugs in use in any Bus Monitor entry (services and the map
+        find a profile by id across entries, so it must be unique everywhere)."""
+        taken: set[str] = set()
+        for entry in self.hass.config_entries.async_entries(DOMAIN):
+            for pid, p in (entry.options.get(OPT_PROFILES) or {}).items():
+                if entry.entry_id == self.config_entry.entry_id and pid == except_id:
+                    continue
+                taken.update((pid, slugify(p.get("name", pid))))
+        return taken
+
     async def async_step_add_profile(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -346,7 +359,7 @@ class BusMonitorOptionsFlow(OptionsFlow):
             else:
                 profiles = self._profiles()
                 pid = slugify(user_input["name"])
-                if pid in profiles:
+                if pid in self._taken_names():
                     errors["name"] = "name_exists"
                 else:
                     profiles[pid] = {**self._profile_fields(user_input, loc), "checkpoints": []}
@@ -386,15 +399,9 @@ class BusMonitorOptionsFlow(OptionsFlow):
         current = profiles[pid]
         if user_input is not None:
             loc = self._resolve_location(user_input, str(user_input["device"]))
-            taken = {
-                key
-                for other, p in profiles.items()
-                if other != pid
-                for key in (other, slugify(p.get("name", other)))
-            }
             if not loc:
                 errors["base"] = "location_required"
-            elif slugify(user_input["name"]) in taken:
+            elif slugify(user_input["name"]) in self._taken_names(except_id=pid):
                 errors["name"] = "name_exists"
             else:
                 fields = self._profile_fields(user_input, loc)
@@ -404,6 +411,7 @@ class BusMonitorOptionsFlow(OptionsFlow):
         stop = current.get("stop") or {}
         suggested: dict[str, Any] = {
             "name": current.get("name", pid),
+            "announce_as": current.get("announce_as", ""),
             "device": str(current["device_id"]),
             "late_grace_min": stop.get("late_grace_min", 10),
             "active_start": current.get("active_start", "05:30"),

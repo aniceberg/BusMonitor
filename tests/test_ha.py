@@ -556,3 +556,71 @@ async def test_edit_profile_moves_the_stop(hass: HomeAssistant):
     assert (stop["expected_arrival"], stop["late_grace_min"]) == ("07:40", 3)
     cfg = entry.runtime_data.trackers["morning"].config
     assert (cfg.stop.lat, cfg.stop.radius_m) == (40.01, 120)
+
+
+async def test_announce_as_is_spoken_in_alerts_and_where_is_the_bus(hass: HomeAssistant):
+    now = datetime.now(UTC)
+    client = _client([_pos(39.980, now - timedelta(seconds=30))])
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        data=DATA,
+        options={"profiles": {"morning": {**PROFILE, "announce_as": "Daniel's bus"}}},
+    )
+    entry.add_to_hass(hass)
+    with patch("custom_components.bus_monitor.TraccarClient", return_value=client):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    events = []
+    hass.bus.async_listen(EVENT_ALERT, events.append)
+    client.positions.return_value = [_pos(39.9905, now)]
+    async_fire_time_changed(hass, datetime.now(UTC) + timedelta(seconds=30))
+    await hass.async_block_till_done()
+    assert events[0].data["bus"] == "Daniel's bus"
+    assert events[0].data["message"] == "Daniel's bus is about 5 minutes away."
+
+    entry.runtime_data.geocoder = AsyncMock()
+    entry.runtime_data.geocoder.ways_near = AsyncMock(return_value=[])
+    resp = await hass.services.async_call(
+        DOMAIN, "describe_location", {"profile": "morning"}, blocking=True, return_response=True
+    )
+    assert resp["text"].startswith("Daniel's bus ")
+
+
+async def test_edit_sets_and_clears_announce_as(hass: HomeAssistant):
+    client = _client([_pos(39.98, datetime.now(UTC))])
+    entry = await _setup(hass, client)
+    await _edit(hass, entry, client, "morning", {"announce_as": "  Daniel's bus "})
+    assert entry.options["profiles"]["morning"]["announce_as"] == "Daniel's bus"
+    assert entry.runtime_data.trackers["morning"].config.bus_name == "Daniel's bus"
+
+    await _edit(hass, entry, client, "morning", {"announce_as": ""})
+    assert entry.runtime_data.trackers["morning"].config.bus_name == "Bus 12"  # vehicle name
+
+
+async def test_profile_name_must_be_unique_across_entries(hass: HomeAssistant):
+    client = _client([_pos(39.98, datetime.now(UTC))])
+    await _setup(hass, client)  # has "Morning"
+    other = MockConfigEntry(domain=DOMAIN, version=2, data={**DATA, "username": "u2"}, options={})
+    other.add_to_hass(hass)
+    with patch("custom_components.bus_monitor.TraccarClient", return_value=client):
+        await hass.config_entries.async_setup(other.entry_id)
+        await hass.async_block_till_done()
+        result = await hass.config_entries.options.async_init(other.entry_id)
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"next_step_id": "add_profile"}
+        )
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {
+                "name": "morning",
+                "device": "1",
+                "location": {"latitude": 40.0, "longitude": -75.0, "radius": 75},
+                "late_grace_min": 5,
+                "active_start": "06:00:00",
+                "active_end": "09:00:00",
+                "weekdays": ["0"],
+                "offline_after_min": 0,
+            },
+        )
+    assert result["errors"] == {"name": "name_exists"}

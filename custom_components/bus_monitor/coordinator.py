@@ -77,7 +77,7 @@ class BusMonitorCoordinator(DataUpdateCoordinator[dict[str, Position]]):
         self._last_save = 0.0
         for profile_id, raw in (entry.options.get(OPT_PROFILES) or {}).items():
             cfg = BusConfig.from_dict(profile_id, raw)
-            if device := devices.get(cfg.device_id):
+            if not cfg.bus_name and (device := devices.get(cfg.device_id)):
                 cfg = replace(cfg, bus_name=bus_label(device.name))
             self.trackers[profile_id] = TripTracker(cfg)
 
