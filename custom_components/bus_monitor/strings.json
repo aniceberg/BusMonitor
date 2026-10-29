@@ -2,13 +2,24 @@
   "config": {
     "step": {
       "user": {
-        "title": "Connect to the bus GPS server",
+        "title": "Where does the bus position come from?",
+        "description": "Pick the tracking provider. To use several (e.g. a Traccar server and a Bouncie account), add Bus Monitor once for each.",
+        "menu_options": {
+          "traccar": "Traccar GPS server",
+          "bouncie": "Bouncie (OBD plug-in tracker)"
+        }
+      },
+      "traccar": {
+        "title": "Connect to a Traccar GPS server",
         "description": "Traccar server address (e.g. http://your-server:8082) and login, as given by your bus company. If the address starts with http://, the login is not encrypted in transit.",
         "data": {
           "base_url": "Server URL",
           "username": "Username",
           "password": "Password"
         }
+      },
+      "pick_implementation": {
+        "title": "Pick the Bouncie app credentials"
       },
       "devices": {
         "title": "Choose buses",
@@ -22,6 +33,10 @@
         "data": {
           "password": "Password"
         }
+      },
+      "reauth_bouncie": {
+        "title": "Sign in to Bouncie again",
+        "description": "Bouncie needs you to approve access again. You will be sent to Bouncie to sign in."
       }
     },
     "error": {
@@ -30,8 +45,16 @@
       "no_devices": "This login can't see any buses."
     },
     "abort": {
-      "already_configured": "This server and login are already set up.",
-      "reauth_successful": "Re-authentication was successful."
+      "already_configured": "This account is already set up.",
+      "reauth_successful": "Re-authentication was successful.",
+      "cannot_connect": "Cannot reach the tracking provider.",
+      "invalid_auth": "The sign-in was rejected.",
+      "no_devices": "This account can't see any vehicles.",
+      "wrong_account": "You signed in to a different Bouncie account than the one this entry uses.",
+      "missing_configuration": "Bouncie isn't configured: add Application credentials for Bus Monitor first."
+    },
+    "create_entry": {
+      "default": "Connected."
     }
   },
   "options": {
@@ -143,5 +166,8 @@
         }
       }
     }
+  },
+  "application_credentials": {
+    "description": "Register an app at {developer_portal_url}, add the redirect URI {redirect_url}, then paste its Client ID and Client Secret here."
   }
 }

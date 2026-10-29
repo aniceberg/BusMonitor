@@ -21,7 +21,7 @@ class BusTracker(BusEntity, TrackerEntity):
     _attr_name = None
     _attr_source_type = SourceType.GPS
 
-    def __init__(self, coordinator, device_id: int) -> None:
+    def __init__(self, coordinator, device_id: str) -> None:
         super().__init__(coordinator, device_id)
         self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{device_id}_tracker"
 

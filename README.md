@@ -7,10 +7,15 @@
 
 # Bus Monitor (Home Assistant / HACS)
 
-School-bus arrival alerts for Home Assistant, fed by a **Traccar** GPS server
-(tested with Traccar 4.1). Your bus company gives you the server address and login.
+School-bus arrival alerts for Home Assistant, fed by a vehicle-tracking provider:
+- a **Traccar** GPS server (tested with Traccar 4.1); your bus company gives you the server
+  address and login;
+- a **Bouncie** OBD-II tracker (see [docs/bouncie.md](docs/bouncie.md)).
 
-- Pick one or several buses from the server's device list.
+To use several providers, add Bus Monitor once per account (e.g. one Traccar server and one
+Bouncie login). Each bus profile follows one vehicle from its entry.
+
+- Pick one or several buses from the provider's vehicle list.
 - Per bus *profile* (e.g. "Morning", "Afternoon"): a stop, a watch window,
   and any number of **checkpoints** ("about 10 / 5 / 2 minutes away").
 - Fires a `bus_monitor_alert` event for each checkpoint, arrival, running-late
@@ -23,11 +28,13 @@ School-bus arrival alerts for Home Assistant, fed by a **Traccar** GPS server
 ## Install
 1. HACS -> Custom repositories -> add this repo as an *Integration*.
 2. Install, restart Home Assistant, then Settings -> Devices & services -> Add -> **Bus Monitor**.
-3. Enter the server URL, shared login, and choose the bus(es).
+3. Choose **Traccar GPS server** and enter the server URL and shared login, or choose
+   **Bouncie** and sign in (one-time app setup: [docs/bouncie.md](docs/bouncie.md)). Then
+   choose the bus(es).
 4. Configure -> **Add a bus profile**, then **Add an alert checkpoint** (repeat per alert).
    Tip: tick *Use the bus's current position* while the bus is at the spot you want.
 
-> Security: the server only speaks plain HTTP and the login is shared by all parents, so
+> Security (Traccar): the server only speaks plain HTTP and the login is shared by all parents, so
 > the credentials and bus positions travel unencrypted. They're stored only in the Home
 > Assistant config entry. Ask the vendor for HTTPS or a separate login if you can.
 
@@ -88,6 +95,7 @@ with p10/p90/count as attributes).
 uv venv --python 3.14 && uv pip install pytest-homeassistant-custom-component ruff
 .venv/bin/python -m pytest
 TRACCAR_URL=http://your-server:8082 TRACCAR_USER=... TRACCAR_PASS=... .venv/bin/python scripts/probe.py   # list buses + positions
+BOUNCIE_TOKEN=... .venv/bin/python scripts/bouncie_probe.py 10 30   # how often Bouncie positions refresh
 ```
 
 ## Where is the bus? (Google Home)
@@ -102,3 +110,4 @@ HACS and the Home Assistant UI. Regenerate them with `.venv/bin/python scripts/m
 
 ## Roadmap
 - WebSocket push (`/api/socket`) instead of polling; blueprint automation.
+- Bouncie `tripData` webhooks for live positions (needs Home Assistant reachable over HTTPS).

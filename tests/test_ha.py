@@ -1,4 +1,4 @@
-"""Home Assistant level tests with a mocked Traccar client."""
+"""Home Assistant level tests with a mocked Traccar client (Bouncie: tests/test_bouncie_ha.py)."""
 
 from __future__ import annotations
 
@@ -15,14 +15,16 @@ from pytest_homeassistant_custom_component.common import (
 
 from custom_components.bus_monitor.const import DOMAIN, EVENT_ALERT
 from custom_components.bus_monitor.models import Position
-from custom_components.bus_monitor.traccar_client import CannotConnect, Device, InvalidAuth
+from custom_components.bus_monitor.providers import CannotConnect, Device, InvalidAuth
 
 CONN = {"base_url": "http://gps.example:8082", "username": "u", "password": "p"}
-DEVICES = [Device(1, "Bus 12", "b12"), Device(2, "Bus 34", "b34")]
+DATA = {**CONN, "provider": "traccar", "devices": ["1"]}
+DEVICES = [Device("1", "Bus 12", "b12"), Device("2", "Bus 34", "b34")]
 
 
 def _client(positions=None, login_exc=None):
     client = AsyncMock()
+    client.name = client.manufacturer = "Traccar"
     client.login = AsyncMock(side_effect=login_exc)
     client.devices = AsyncMock(return_value=DEVICES)
     client.positions = AsyncMock(return_value=positions or [])
@@ -32,11 +34,15 @@ def _client(positions=None, login_exc=None):
 async def test_config_flow_happy_path(hass: HomeAssistant):
     with patch("custom_components.bus_monitor.config_flow.TraccarClient", return_value=_client()):
         result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
+        assert result["type"] is FlowResultType.MENU
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"next_step_id": "traccar"}
+        )
         result = await hass.config_entries.flow.async_configure(result["flow_id"], CONN)
         assert result["step_id"] == "devices"
         result = await hass.config_entries.flow.async_configure(result["flow_id"], {"devices": ["1"]})
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["data"]["devices"] == [1]
+    assert result["data"] == DATA
 
 
 async def test_config_flow_errors(hass: HomeAssistant):
@@ -46,12 +52,15 @@ async def test_config_flow_errors(hass: HomeAssistant):
             return_value=_client(login_exc=exc),
         ):
             result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"], {"next_step_id": "traccar"}
+            )
             result = await hass.config_entries.flow.async_configure(result["flow_id"], CONN)
         assert result["errors"] == {"base": key}
 
 
 PROFILE = {
-    "device_id": 1,
+    "device_id": "1",
     "name": "Morning",
     "stop": {"lat": 40.0, "lon": -75.0, "radius_m": 75, "expected_arrival": None, "late_grace_min": 5},
     "checkpoints": [{"label": "5 min", "minutes": 5, "lat": 39.990, "lon": -75.0, "radius_m": 100, "announce": True}],
@@ -63,7 +72,7 @@ PROFILE = {
 
 async def _setup(hass, client):
     entry = MockConfigEntry(
-        domain=DOMAIN, data={**CONN, "devices": [1]}, options={"profiles": {"morning": PROFILE}}
+        domain=DOMAIN, version=2, data=DATA, options={"profiles": {"morning": PROFILE}}
     )
     entry.add_to_hass(hass)
     with patch("custom_components.bus_monitor.TraccarClient", return_value=client):
@@ -73,7 +82,7 @@ async def _setup(hass, client):
 
 
 def _pos(lat, at):
-    return Position(1, lat, -75.0, at, speed_mps=5, course=0.0)
+    return Position("1", lat, -75.0, at, speed_mps=5, course=0.0)
 
 
 async def test_setup_creates_entities_and_fires_alert(hass: HomeAssistant):
@@ -161,7 +170,7 @@ async def test_describe_location_service_speaks_and_returns_text(hass: HomeAssis
     from tests.test_streets import OVERPASS
 
     now = datetime.now(UTC)
-    entry = await _setup(hass, _client([Position(1, 40.0015, -75.0, now, speed_mps=8, course=0.0)]))
+    entry = await _setup(hass, _client([Position("1", 40.0015, -75.0, now, speed_mps=8, course=0.0)]))
     entry.runtime_data.geocoder = AsyncMock()
     entry.runtime_data.geocoder.ways_near = AsyncMock(return_value=parse_overpass(OVERPASS))
     speak = async_mock_service(hass, "tts", "speak")
@@ -230,13 +239,13 @@ async def test_remove_checkpoint_is_saved(hass: HomeAssistant):
 
 async def test_reload_while_bus_at_stop_does_not_repeat_arrival(hass: HomeAssistant):
     now = datetime.now(UTC)
-    client = _client([Position(1, 40.0, -75.0, now, speed_mps=0, course=0.0)])
+    client = _client([Position("1", 40.0, -75.0, now, speed_mps=0, course=0.0)])
     events = []
     hass.bus.async_listen(EVENT_ALERT, events.append)
     entry = await _setup(hass, client)
     assert hass.states.get("sensor.bus_12_morning_status").state == "arrived"
 
-    client.positions.return_value = [Position(1, 40.0, -75.0, now + timedelta(seconds=10), speed_mps=0)]
+    client.positions.return_value = [Position("1", 40.0, -75.0, now + timedelta(seconds=10), speed_mps=0)]
     with patch("custom_components.bus_monitor.TraccarClient", return_value=client):
         await hass.config_entries.async_reload(entry.entry_id)
         await hass.async_block_till_done()
@@ -335,13 +344,13 @@ async def test_restart_after_arrival_does_not_announce_late(hass: HomeAssistant,
         },
     }
     entry = MockConfigEntry(
-        domain=DOMAIN, entry_id="restart_test", data={**CONN, "devices": [1]}, options={"profiles": {"morning": profile}}
+        domain=DOMAIN, version=2, entry_id="restart_test", data=DATA, options={"profiles": {"morning": profile}}
     )
     entry.add_to_hass(hass)
     events = []
     hass.bus.async_listen(EVENT_ALERT, events.append)
     # bus has left the stop and is driving away
-    client = _client([Position(1, 39.98, -75.0, datetime.now(UTC), speed_mps=8, course=180.0)])
+    client = _client([Position("1", 39.98, -75.0, datetime.now(UTC), speed_mps=8, course=180.0)])
     with patch("custom_components.bus_monitor.TraccarClient", return_value=client):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()

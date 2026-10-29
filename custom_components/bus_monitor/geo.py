@@ -6,6 +6,7 @@ import math
 
 EARTH_RADIUS_M = 6_371_008.8
 KNOTS_TO_MPS = 0.514444
+MPH_TO_MPS = 0.44704
 
 
 def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:

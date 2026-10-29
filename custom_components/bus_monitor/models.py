@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, time
 from typing import Any
 
-from .geo import KNOTS_TO_MPS
+from .geo import KNOTS_TO_MPS, MPH_TO_MPS
 
 KIND_TIME = "time"
 KIND_STREET = "street"
@@ -16,7 +16,7 @@ KIND_STREET = "street"
 class Position:
     """One GPS fix for one bus."""
 
-    device_id: int
+    device_id: str
     lat: float
     lon: float
     fix_time: datetime  # timezone-aware
@@ -28,22 +28,41 @@ class Position:
     def from_traccar(cls, raw: dict[str, Any]) -> Position:
         """Build from a Traccar /api/positions item (speed is in knots)."""
         return cls(
-            device_id=int(raw["deviceId"]),
+            device_id=str(raw["deviceId"]),
             lat=float(raw["latitude"]),
             lon=float(raw["longitude"]),
-            fix_time=parse_traccar_time(raw["fixTime"]),
+            fix_time=parse_iso_time(raw["fixTime"]),
             speed_mps=float(raw.get("speed") or 0.0) * KNOTS_TO_MPS,
             course=float(raw["course"]) if raw.get("course") is not None else None,
             valid=bool(raw.get("valid", True)),
         )
 
+    @classmethod
+    def from_bouncie(cls, raw: dict[str, Any]) -> Position | None:
+        """Build from a Bouncie /v1/vehicles item (speed is in mph); None if it has no location."""
+        stats = raw.get("stats") or {}
+        loc = stats.get("location")
+        if not loc or loc.get("lat") is None or loc.get("lon") is None:
+            return None
+        return cls(
+            device_id=str(raw["imei"]),
+            lat=float(loc["lat"]),
+            lon=float(loc["lon"]),
+            fix_time=parse_iso_time(stats["lastUpdated"]),
+            speed_mps=float(stats.get("speed") or 0.0) * MPH_TO_MPS,
+            course=float(loc["heading"]) if loc.get("heading") is not None else None,
+        )
 
-def parse_traccar_time(value: str) -> datetime:
-    """Parse Traccar timestamps such as 2026-10-15T12:47:01.000+0000."""
+
+def parse_iso_time(value: str) -> datetime:
+    """Parse ISO timestamps such as 2026-10-15T12:47:01.000+0000 or ...Z."""
     text = value.strip()
     if text.endswith("Z"):
         text = text[:-1] + "+00:00"
     return datetime.fromisoformat(text)
+
+
+parse_traccar_time = parse_iso_time  # older name
 
 
 @dataclass(frozen=True)
@@ -131,7 +150,7 @@ class BusConfig:
     """Everything the alert engine needs to know about one bus."""
 
     profile_id: str
-    device_id: int
+    device_id: str
     name: str
     stop: StopConfig | None = None
     checkpoints: tuple[Checkpoint, ...] = ()
@@ -140,13 +159,13 @@ class BusConfig:
     active_end: time = time(9, 30)
     weekdays: tuple[int, ...] = (0, 1, 2, 3, 4)  # Monday=0
     offline_after_min: int = 0  # 0 disables the "no GPS fix" alert
-    bus_name: str = ""  # spoken name of the bus, e.g. "Bus 12" (set from the Traccar device)
+    bus_name: str = ""  # spoken name of the bus, e.g. "Bus 12" (set from the tracked vehicle)
 
     @classmethod
     def from_dict(cls, profile_id: str, data: dict[str, Any]) -> BusConfig:
         return cls(
             profile_id=profile_id,
-            device_id=int(data["device_id"]),
+            device_id=str(data["device_id"]),
             name=str(data.get("name", profile_id)),
             stop=StopConfig.from_dict(data["stop"]) if data.get("stop") else None,
             checkpoints=tuple(Checkpoint.from_dict(c) for c in data.get("checkpoints", [])),
@@ -164,7 +183,7 @@ class Alert:
 
     kind: str  # "checkpoint" | "arrived" | "late" | "offline"
     profile_id: str
-    device_id: int
+    device_id: str
     bus_name: str
     profile_name: str
     label: str
@@ -192,6 +211,6 @@ class Alert:
 
 
 def bus_label(device_name: str) -> str:
-    """How to say a Traccar device name: '12' -> 'Bus 12', 'Bus 7' stays as is."""
+    """How to say a vehicle name: '12' -> 'Bus 12', 'Bus 7' stays as is."""
     name = device_name.strip()
     return name if name.lower().startswith("bus") else f"Bus {name}"

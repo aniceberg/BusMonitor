@@ -1,4 +1,4 @@
-"""Bus Monitor: school-bus arrival alerts from a Traccar GPS server."""
+"""Bus Monitor: school-bus arrival alerts from a Traccar server or a Bouncie account."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from homeassistant.exceptions import (
     ConfigEntryNotReady,
     ServiceValidationError,
 )
+from homeassistant.helpers import config_entry_oauth2_flow
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_create_clientsession, async_get_clientsession
 from homeassistant.helpers.storage import Store
@@ -21,8 +22,12 @@ from .const import (
     CONF_BASE_URL,
     CONF_DEVICES,
     CONF_PASSWORD,
+    CONF_PROVIDER,
     CONF_USERNAME,
     DOMAIN,
+    OPT_PROFILES,
+    PROVIDER_BOUNCIE,
+    PROVIDER_TRACCAR,
     SERVICE_DESCRIBE,
     SERVICE_RESET_TRIP,
     SERVICE_SUGGEST,
@@ -33,7 +38,9 @@ from .coordinator import BusMonitorCoordinator
 from .geocoder import OverpassGeocoder
 from .locator import async_describe
 from .panel import async_setup_frontend, async_update_panel
-from .traccar_client import CannotConnect, InvalidAuth, TraccarClient
+from .providers import CannotConnect, InvalidAuth, Provider
+from .providers.bouncie import BouncieClient
+from .providers.traccar import TraccarClient
 from .websocket import async_register_websocket
 
 PLATFORMS = [Platform.DEVICE_TRACKER, Platform.SENSOR, Platform.BINARY_SENSOR]
@@ -56,16 +63,45 @@ DESCRIBE_SCHEMA = vol.Schema(
 )
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: BusMonitorConfigEntry) -> bool:
+async def _async_provider(hass: HomeAssistant, entry: BusMonitorConfigEntry) -> Provider:
+    if entry.data[CONF_PROVIDER] == PROVIDER_BOUNCIE:
+        implementation = await config_entry_oauth2_flow.async_get_config_entry_implementation(
+            hass, entry
+        )
+        oauth = config_entry_oauth2_flow.OAuth2Session(hass, entry, implementation)
+        return BouncieClient(async_get_clientsession(hass), oauth)
     # Dedicated session: Traccar uses a session cookie that must not leak into
     # Home Assistant's shared aiohttp session.
     session = async_create_clientsession(hass, cookie_jar=aiohttp.CookieJar(unsafe=True))
-    client = TraccarClient(
+    return TraccarClient(
         session,
         entry.data[CONF_BASE_URL],
         entry.data[CONF_USERNAME],
         entry.data[CONF_PASSWORD],
     )
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """v1 (Traccar only, int device ids) -> v2 (provider key, str device ids)."""
+    if entry.version > 2:
+        return False
+    if entry.version == 1:
+        data = {
+            **entry.data,
+            CONF_PROVIDER: PROVIDER_TRACCAR,
+            CONF_DEVICES: [str(i) for i in entry.data.get(CONF_DEVICES, [])],
+        }
+        profiles = {
+            pid: {**p, "device_id": str(p["device_id"])}
+            for pid, p in (entry.options.get(OPT_PROFILES) or {}).items()
+        }
+        options = {**entry.options, OPT_PROFILES: profiles} if profiles else dict(entry.options)
+        hass.config_entries.async_update_entry(entry, data=data, options=options, version=2)
+    return True
+
+
+async def async_setup_entry(hass: HomeAssistant, entry: BusMonitorConfigEntry) -> bool:
+    client = await _async_provider(hass, entry)
     try:
         await client.login()
         devices = {d.id: d for d in await client.devices()}
@@ -74,7 +110,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: BusMonitorConfigEntry) -
     except CannotConnect as err:
         raise ConfigEntryNotReady(str(err)) from err
 
-    device_ids = [int(i) for i in entry.data[CONF_DEVICES]]
+    device_ids = [str(i) for i in entry.data[CONF_DEVICES]]
     coordinator = BusMonitorCoordinator(hass, entry, client, device_ids, devices)
     coordinator.geocoder = await _async_geocoder(hass)
     await coordinator.async_load()

@@ -49,6 +49,7 @@ Menu names in the Google Home app change from time to time; if a step looks diff
 for the option that runs a scene/script by voice.
 
 ## Notes
+- This works the same whether the bus comes from Traccar or Bouncie.
 - Street names come from OpenStreetMap through the public Overpass API; results are cached per
   ~55 m cell for a week, so a bus on its usual route triggers few lookups. If the lookup fails the
   sentence still works, it just won't name a street.

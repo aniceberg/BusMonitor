@@ -1,4 +1,4 @@
-"""Data coordinator: polls Traccar, drives the alert engine and calibration."""
+"""Data coordinator: polls the tracking provider, drives the alert engine and calibration."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
@@ -16,19 +17,20 @@ from homeassistant.util import dt as dt_util
 from .alerts import TripTracker
 from .calibration import TrailRecorder, checkpoint_stats, typical_position
 from .const import (
-    DEFAULT_SCAN_INTERVAL,
+    CONF_PROVIDER,
     DOMAIN,
     EVENT_ALERT,
     EVENT_SHADOW,
-    MIN_SCAN_INTERVAL,
     OPT_PROFILES,
     OPT_SCAN_INTERVAL,
+    PROVIDER_TRACCAR,
+    SCAN_INTERVALS,
     STORAGE_KEY,
     STORAGE_VERSION,
 )
 from .geocoder import OverpassGeocoder
 from .models import Alert, BusConfig, Position, bus_label
-from .traccar_client import CannotConnect, Device, InvalidAuth, TraccarClient
+from .providers import CannotConnect, Device, InvalidAuth, Provider
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -39,7 +41,7 @@ MIN_TRIPS_FOR_MEASURED_LEAD = 3
 MIN_AUTO_TRIPS = 5
 
 
-class BusMonitorCoordinator(DataUpdateCoordinator[dict[int, Position]]):
+class BusMonitorCoordinator(DataUpdateCoordinator[dict[str, Position]]):
     """Holds the latest position per selected device."""
 
     config_entry: ConfigEntry
@@ -48,13 +50,12 @@ class BusMonitorCoordinator(DataUpdateCoordinator[dict[int, Position]]):
         self,
         hass: HomeAssistant,
         entry: ConfigEntry,
-        client: TraccarClient,
-        device_ids: list[int],
-        devices: dict[int, Device],
+        client: Provider,
+        device_ids: list[str],
+        devices: dict[str, Device],
     ) -> None:
-        interval = max(
-            MIN_SCAN_INTERVAL, int(entry.options.get(OPT_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))
-        )
+        default, minimum = SCAN_INTERVALS[entry.data.get(CONF_PROVIDER, PROVIDER_TRACCAR)]
+        interval = max(minimum, int(entry.options.get(OPT_SCAN_INTERVAL, default)))
         super().__init__(
             hass,
             _LOGGER,
@@ -150,19 +151,20 @@ class BusMonitorCoordinator(DataUpdateCoordinator[dict[int, Position]]):
             self.store.async_delay_save(self.data_to_save, 1)
 
     @property
-    def profiles_by_device(self) -> dict[int, list[TripTracker]]:
-        out: dict[int, list[TripTracker]] = {}
+    def profiles_by_device(self) -> dict[str, list[TripTracker]]:
+        out: dict[str, list[TripTracker]] = {}
         for tracker in self.trackers.values():
             out.setdefault(tracker.config.device_id, []).append(tracker)
         return out
 
-    async def _async_update_data(self) -> dict[int, Position]:
+    async def _async_update_data(self) -> dict[str, Position]:
         try:
             positions = await self.client.positions()
         except InvalidAuth as err:
-            raise UpdateFailed("Traccar login was rejected") from err
+            # Starts Home Assistant's "Reauthenticate" flow instead of retrying bad credentials.
+            raise ConfigEntryAuthFailed(f"{self.client.name} login was rejected") from err
         except CannotConnect as err:
-            raise UpdateFailed(f"Cannot reach Traccar: {err}") from err
+            raise UpdateFailed(f"Cannot reach {self.client.name}: {err}") from err
 
         data = {p.device_id: p for p in positions if p.device_id in self.device_ids}
         now = dt_util.now()

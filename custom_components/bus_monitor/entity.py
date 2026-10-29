@@ -11,18 +11,19 @@ from .coordinator import BusMonitorCoordinator
 
 
 class BusEntity(CoordinatorEntity[BusMonitorCoordinator]):
-    """An entity attached to one physical bus (Traccar device)."""
+    """An entity attached to one physical bus (a vehicle in the tracking provider)."""
 
     _attr_has_entity_name = True
 
-    def __init__(self, coordinator: BusMonitorCoordinator, device_id: int) -> None:
+    def __init__(self, coordinator: BusMonitorCoordinator, device_id: str) -> None:
         super().__init__(coordinator)
         self._device_id = device_id
         device = coordinator.devices.get(device_id)
+        # Identifiers are scoped per config entry, so the same id from two providers is fine.
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, str(device_id))},
+            identifiers={(DOMAIN, device_id)},
             name=device.name if device else f"Bus {device_id}",
-            manufacturer="Traccar",
+            manufacturer=coordinator.client.manufacturer,
         )
 
 
