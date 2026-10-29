@@ -63,6 +63,7 @@
         "title": "Bus Monitor",
         "menu_options": {
           "add_profile": "Add a bus profile (bus + stop + schedule)",
+          "edit_profile": "Edit a bus profile (rename, stop, schedule)",
           "add_checkpoint": "Add an alert checkpoint",
           "remove": "Remove a profile or checkpoints",
           "settings": "Settings (polling, sidebar)"
@@ -71,6 +72,28 @@
       "add_profile": {
         "title": "Add a bus profile",
         "description": "Pick the stop on the map, or tick 'use bus position' to use where the bus is right now. Make one profile for the morning and another for the afternoon if the times differ.",
+        "data": {
+          "name": "Profile name",
+          "device": "Bus",
+          "location": "Stop location and arrival radius",
+          "use_bus_position": "Use the bus's current position instead",
+          "expected_arrival": "Normal arrival time at the stop",
+          "late_grace_min": "Minutes behind schedule before 'running late'",
+          "active_start": "Watch from",
+          "active_end": "Watch until",
+          "weekdays": "Days",
+          "offline_after_min": "Alert if no GPS fix for N minutes (0 = off)"
+        }
+      },
+      "edit_profile": {
+        "title": "Edit a bus profile",
+        "data": {
+          "profile": "Profile"
+        }
+      },
+      "edit_profile_details": {
+        "title": "Edit a bus profile",
+        "description": "Change the name, bus, stop or schedule. Checkpoints, recorded trips and entity IDs are kept, and scripts keep working with profile: {profile_id}.",
         "data": {
           "name": "Profile name",
           "device": "Bus",
