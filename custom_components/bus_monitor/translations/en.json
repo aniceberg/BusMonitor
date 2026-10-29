@@ -51,15 +51,7 @@
       "invalid_auth": "The sign-in was rejected.",
       "no_devices": "This account can't see any vehicles.",
       "wrong_account": "You signed in to a different Bouncie account than the one this entry uses.",
-      "missing_credentials": "Add your Bouncie app's Client ID and Client Secret under Settings > Devices & services > Application credentials first. Register the app at https://www.bouncie.dev with the redirect URI https://my.home-assistant.io/redirect/oauth.",
-      "missing_configuration": "Bouncie isn't configured: add Application credentials for Bus Monitor first.",
-      "authorize_url_timeout": "Timed out while preparing the Bouncie sign-in.",
-      "oauth_error": "Bouncie returned an invalid token.",
-      "oauth_failed": "Getting a token from Bouncie failed.",
-      "oauth_timeout": "Bouncie took too long to issue a token.",
-      "oauth_unauthorized": "Bouncie rejected the app credentials or the sign-in.",
-      "user_rejected_authorize": "Access was not granted: {error}",
-      "no_url_available": "No Home Assistant URL is available for the sign-in redirect."
+      "missing_configuration": "Bouncie isn't configured: add Application credentials for Bus Monitor first."
     },
     "create_entry": {
       "default": "Connected."
@@ -176,6 +168,6 @@
     }
   },
   "application_credentials": {
-    "description": "Register an app at https://www.bouncie.dev, add the redirect URI https://my.home-assistant.io/redirect/oauth, then paste its Client ID and Client Secret here."
+    "description": "Register an app at {developer_portal_url}, add the redirect URI {redirect_url}, then paste its Client ID and Client Secret here."
   }
 }

@@ -32,6 +32,13 @@ class BouncieOAuth2Implementation(AuthImplementation):
             config_entry_oauth2_flow._raise_mapped_token_error(err, self.service_domain)
 
 
+async def async_get_description_placeholders(hass: HomeAssistant) -> dict[str, str]:
+    return {
+        "developer_portal_url": "https://www.bouncie.dev",
+        "redirect_url": "https://my.home-assistant.io/redirect/oauth",
+    }
+
+
 async def async_get_authorization_server(hass: HomeAssistant) -> AuthorizationServer:
     return AuthorizationServer(authorize_url=AUTHORIZE_URL, token_url=TOKEN_URL)
 
