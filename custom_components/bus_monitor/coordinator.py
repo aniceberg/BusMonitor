@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -157,7 +157,11 @@ class BusMonitorCoordinator(DataUpdateCoordinator[dict[str, Position]]):
             out.setdefault(tracker.config.device_id, []).append(tracker)
         return out
 
-    async def _async_update_data(self) -> dict[str, Position]:
+    def needs_positions(self, now: datetime) -> bool:
+        """Whether any profile is watching now (in its window and the bus not yet arrived)."""
+        return any(t.wants_position(now) for t in self.trackers.values())
+
+    async def _fetch_positions(self) -> dict[str, Position]:
         try:
             positions = await self.client.positions()
         except InvalidAuth as err:
@@ -165,9 +169,19 @@ class BusMonitorCoordinator(DataUpdateCoordinator[dict[str, Position]]):
             raise ConfigEntryAuthFailed(f"{self.client.name} login was rejected") from err
         except CannotConnect as err:
             raise UpdateFailed(f"Cannot reach {self.client.name}: {err}") from err
+        return {p.device_id: p for p in positions if p.device_id in self.device_ids}
 
-        data = {p.device_id: p for p in positions if p.device_id in self.device_ids}
+    async def async_fetch_now(self) -> None:
+        """One provider call outside the schedule, e.g. 'where is the bus?' after the window."""
+        self.async_set_updated_data({**(self.data or {}), **await self._fetch_positions()})
+
+    async def _async_update_data(self) -> dict[str, Position]:
         now = dt_util.now()
+        if self.data is not None and not self.needs_positions(now):
+            # Nothing to watch: keep the last positions and spare the provider a request.
+            data = self.data
+        else:
+            data = await self._fetch_positions()
         save = False
         for tracker in self.trackers.values():
             cfg = tracker.config

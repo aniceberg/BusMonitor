@@ -86,6 +86,11 @@ class TripTracker:
         cfg = self.config
         return now.weekday() in cfg.weekdays and cfg.active_start <= now.time() <= cfg.active_end
 
+    def wants_position(self, now: datetime) -> bool:
+        """True while a fresh fix matters: inside the watch window, until today's arrival."""
+        arrived_today = self.arrived and self.trip_date == now.date()
+        return self.is_active(now) and not arrived_today
+
     # -- position updates ---------------------------------------------------
     def update(self, pos: Position, now: datetime) -> list[Alert]:
         """Feed a new fix; returns alerts that should fire."""

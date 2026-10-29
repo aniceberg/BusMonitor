@@ -109,7 +109,7 @@
       "settings": {
         "title": "Settings",
         "data": {
-          "scan_interval": "Seconds between GPS checks",
+          "scan_interval": "Seconds between GPS checks (only while watching for the bus)",
           "show_panel": "Show Bus Monitor map in the sidebar"
         }
       }

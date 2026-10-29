@@ -18,6 +18,8 @@ Bouncie login). Each bus profile follows one vehicle from its entry.
 - Pick one or several buses from the provider's vehicle list.
 - Per bus *profile* (e.g. "Morning", "Afternoon"): a stop, a watch window,
   and any number of **checkpoints** ("about 10 / 5 / 2 minutes away").
+- Polls the provider only while a profile is watching: inside its watch window, until the bus
+  reaches the stop. "Where is the bus?" still works any time (it fetches once on demand).
 - Fires a `bus_monitor_alert` event for each checkpoint, arrival, running-late
   and (optional) no-GPS-fix. Use any automation to announce it on Google Home.
 - **Baseline recorder**: every completed trip's trail and checkpoint timings are
