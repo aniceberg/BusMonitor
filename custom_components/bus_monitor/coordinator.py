@@ -9,6 +9,7 @@ from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
@@ -160,7 +161,8 @@ class BusMonitorCoordinator(DataUpdateCoordinator[dict[str, Position]]):
         try:
             positions = await self.client.positions()
         except InvalidAuth as err:
-            raise UpdateFailed(f"{self.client.name} login was rejected") from err
+            # Starts Home Assistant's "Reauthenticate" flow instead of retrying bad credentials.
+            raise ConfigEntryAuthFailed(f"{self.client.name} login was rejected") from err
         except CannotConnect as err:
             raise UpdateFailed(f"Cannot reach {self.client.name}: {err}") from err
 

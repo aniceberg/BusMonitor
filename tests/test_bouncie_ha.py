@@ -21,7 +21,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry, async_
 
 from custom_components.bus_monitor.const import DOMAIN, EVENT_ALERT
 from custom_components.bus_monitor.models import Position
-from custom_components.bus_monitor.providers import Device
+from custom_components.bus_monitor.providers import Device, InvalidAuth
 from custom_components.bus_monitor.providers.bouncie import AUTHORIZE_URL, TOKEN_URL
 
 from .test_ha import CONN, DATA, PROFILE, _client
@@ -176,3 +176,20 @@ async def test_v1_traccar_entry_migrates_and_keeps_entities(hass: HomeAssistant)
     assert entry.options["scan_interval"] == 20
     assert hass.states.get("device_tracker.bus_12") is not None
     assert hass.states.get("device_tracker.bus_12_2") is None
+
+
+@pytest.mark.usefixtures("credentials")
+async def test_rejected_login_while_running_starts_reauth(hass: HomeAssistant):
+    client = _bouncie([Position(IMEI, 39.98, -75.0, datetime.now(UTC))])
+    entry = _entry()
+    entry.add_to_hass(hass)
+    with patch("custom_components.bus_monitor.BouncieClient", return_value=client):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    client.positions.side_effect = InvalidAuth
+    async_fire_time_changed(hass, datetime.now(UTC) + timedelta(seconds=60))
+    await hass.async_block_till_done()
+
+    flows = hass.config_entries.flow.async_progress_by_handler(DOMAIN)
+    assert [(f["context"]["source"], f["step_id"]) for f in flows] == [("reauth", "reauth_bouncie")]
