@@ -25,7 +25,7 @@ def auto_enable_custom_integrations(enable_custom_integrations):
 def make_config(**overrides) -> BusConfig:
     base = {
         "profile_id": "am",
-        "device_id": 1,
+        "device_id": "1",
         "name": "Bus 12",
         "stop": StopConfig(STOP_LAT, STOP_LON, radius_m=75, late_grace_min=5),
         "checkpoints": (
@@ -39,7 +39,7 @@ def make_config(**overrides) -> BusConfig:
 
 
 def pos(lat: float, lon: float = STOP_LON, at: datetime = MONDAY_7AM, **kw) -> Position:
-    return Position(device_id=1, lat=lat, lon=lon, fix_time=at, **kw)
+    return Position(device_id="1", lat=lat, lon=lon, fix_time=at, **kw)
 
 
 def northbound_trail(

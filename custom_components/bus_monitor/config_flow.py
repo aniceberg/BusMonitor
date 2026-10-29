@@ -3,34 +3,39 @@
 from __future__ import annotations
 
 import copy
+import logging
 from collections.abc import Mapping
 from datetime import time
 from typing import Any
 
 import aiohttp
 import voluptuous as vol
-from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
+from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntry, ConfigFlowResult, OptionsFlow
 from homeassistant.core import callback
-from homeassistant.helpers import selector
-from homeassistant.helpers.aiohttp_client import async_create_clientsession
+from homeassistant.helpers import config_entry_oauth2_flow, selector
+from homeassistant.helpers.aiohttp_client import async_create_clientsession, async_get_clientsession
 from homeassistant.util import slugify
 
 from .const import (
     CONF_BASE_URL,
     CONF_DEVICES,
     CONF_PASSWORD,
+    CONF_PROVIDER,
     CONF_USERNAME,
-    DEFAULT_SCAN_INTERVAL,
     DOMAIN,
-    MIN_SCAN_INTERVAL,
     OPT_PROFILES,
     OPT_SCAN_INTERVAL,
     OPT_SHOW_PANEL,
+    PROVIDER_BOUNCIE,
+    PROVIDER_TRACCAR,
+    SCAN_INTERVALS,
 )
 from .geocoder import GeocodeError
 from .locator import async_street_name
 from .models import KIND_STREET, KIND_TIME
-from .traccar_client import CannotConnect, Device, InvalidAuth, TraccarClient
+from .providers import CannotConnect, Device, InvalidAuth
+from .providers.bouncie import BouncieClient, FixedToken
+from .providers.traccar import TraccarClient
 
 WEEKDAY_OPTIONS = [
     selector.SelectOptionDict(value=str(i), label=n)
@@ -46,12 +51,21 @@ def _hhmm(value: str) -> str:
     return time.fromisoformat(value).isoformat(timespec="minutes")
 
 
-class BusMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
-    VERSION = 1
+class BusMonitorConfigFlow(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, domain=DOMAIN):
+    """Connect one tracking-provider account: a Traccar server or a Bouncie login (OAuth)."""
+
+    DOMAIN = DOMAIN
+    VERSION = 2
 
     def __init__(self) -> None:
+        super().__init__()
         self._conn: dict[str, Any] = {}
         self._devices: list[Device] = []
+        self._title = "School bus tracker"
+
+    @property
+    def logger(self) -> logging.Logger:
+        return logging.getLogger(__name__)
 
     async def _async_connect(self, conn: Mapping[str, Any]) -> list[Device]:
         session = async_create_clientsession(self.hass, cookie_jar=aiohttp.CookieJar(unsafe=True))
@@ -62,6 +76,9 @@ class BusMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
         return await client.devices()
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        return self.async_show_menu(step_id="user", menu_options=[PROVIDER_TRACCAR, PROVIDER_BOUNCIE])
+
+    async def async_step_traccar(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
             user_input[CONF_BASE_URL] = user_input[CONF_BASE_URL].rstrip("/")
@@ -75,14 +92,14 @@ class BusMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
                 if not self._devices:
                     errors["base"] = "no_devices"
                 else:
-                    self._conn = user_input
+                    self._conn = {**user_input, CONF_PROVIDER: PROVIDER_TRACCAR}
                     await self.async_set_unique_id(
                         f"{user_input[CONF_BASE_URL]}|{user_input[CONF_USERNAME]}"
                     )
                     self._abort_if_unique_id_configured()
                     return await self.async_step_devices()
         return self.async_show_form(
-            step_id="user",
+            step_id="traccar",
             data_schema=vol.Schema(
                 {
                     vol.Required(CONF_BASE_URL): selector.TextSelector(
@@ -97,11 +114,36 @@ class BusMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
+    async def async_step_bouncie(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        return await self.async_step_pick_implementation()
+
+    async def async_oauth_create_entry(self, data: dict[str, Any]) -> ConfigFlowResult:
+        """Bouncie sign-in finished: identify the user, then let them pick vehicles."""
+        client = BouncieClient(async_get_clientsession(self.hass), FixedToken(data["token"]))
+        try:
+            user = await client.user()
+            devices = await client.devices()
+        except InvalidAuth:
+            return self.async_abort(reason="invalid_auth")
+        except CannotConnect:
+            return self.async_abort(reason="cannot_connect")
+        await self.async_set_unique_id(f"{PROVIDER_BOUNCIE}|{user['id']}")
+        if self.source == SOURCE_REAUTH:
+            self._abort_if_unique_id_mismatch(reason="wrong_account")
+            return self.async_update_reload_and_abort(self._get_reauth_entry(), data_updates=data)
+        self._abort_if_unique_id_configured()
+        if not devices:
+            return self.async_abort(reason="no_devices")
+        self._devices = devices
+        self._conn = {**data, CONF_PROVIDER: PROVIDER_BOUNCIE}
+        self._title = f"Bouncie ({user.get('name') or user.get('email') or user['id']})"
+        return await self.async_step_devices()
+
     async def async_step_devices(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
             return self.async_create_entry(
-                title="School bus tracker",
-                data={**self._conn, CONF_DEVICES: [int(i) for i in user_input[CONF_DEVICES]]},
+                title=self._title,
+                data={**self._conn, CONF_DEVICES: [str(i) for i in user_input[CONF_DEVICES]]},
             )
         return self.async_show_form(
             step_id="devices",
@@ -111,7 +153,7 @@ class BusMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
                         selector.SelectSelectorConfig(
                             multiple=True,
                             options=[
-                                selector.SelectOptionDict(value=str(d.id), label=d.name)
+                                selector.SelectOptionDict(value=d.id, label=d.name)
                                 for d in sorted(self._devices, key=lambda d: d.name)
                             ],
                         )
@@ -121,7 +163,16 @@ class BusMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
     async def async_step_reauth(self, entry_data: Mapping[str, Any]) -> ConfigFlowResult:
+        if entry_data.get(CONF_PROVIDER) == PROVIDER_BOUNCIE:
+            return await self.async_step_reauth_bouncie()
         return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_bouncie(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        if user_input is None:
+            return self.async_show_form(step_id="reauth_bouncie")
+        return await self.async_step_pick_implementation()
 
     async def async_step_reauth_confirm(
         self, user_input: dict[str, Any] | None = None
@@ -173,9 +224,9 @@ class BusMonitorOptionsFlow(OptionsFlow):
         coord = getattr(self.config_entry, "runtime_data", None)
         return [
             selector.SelectOptionDict(
-                value=str(i), label=coord.devices[i].name if coord and i in coord.devices else str(i)
+                value=i, label=coord.devices[i].name if coord and i in coord.devices else i
             )
-            for i in self.config_entry.data[CONF_DEVICES]
+            for i in map(str, self.config_entry.data[CONF_DEVICES])
         ]
 
     def _profile_options(self) -> list[selector.SelectOptionDict]:
@@ -184,7 +235,7 @@ class BusMonitorOptionsFlow(OptionsFlow):
             for pid, p in self._profiles().items()
         ]
 
-    def _bus_position(self, device_id: int) -> dict[str, float] | None:
+    def _bus_position(self, device_id: str) -> dict[str, float] | None:
         coord = getattr(self.config_entry, "runtime_data", None)
         pos = coord.data.get(device_id) if coord and coord.data else None
         return {"latitude": pos.lat, "longitude": pos.lon} if pos else None
@@ -196,7 +247,7 @@ class BusMonitorOptionsFlow(OptionsFlow):
         except GeocodeError:
             return ""
 
-    def _resolve_location(self, user_input: dict[str, Any], device_id: int) -> dict[str, Any] | None:
+    def _resolve_location(self, user_input: dict[str, Any], device_id: str) -> dict[str, Any] | None:
         """Map pick, or the bus's position if requested; the map's radius is kept either way."""
         loc = user_input.get("location")
         if user_input.get("use_bus_position") and (bus := self._bus_position(device_id)):
@@ -220,14 +271,17 @@ class BusMonitorOptionsFlow(OptionsFlow):
                     OPT_SHOW_PANEL: bool(user_input[OPT_SHOW_PANEL]),
                 },
             )
-        current = self.config_entry.options.get(OPT_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
+        default, minimum = SCAN_INTERVALS[
+            self.config_entry.data.get(CONF_PROVIDER, PROVIDER_TRACCAR)
+        ]
+        current = self.config_entry.options.get(OPT_SCAN_INTERVAL, default)
         show_panel = self.config_entry.options.get(OPT_SHOW_PANEL, True)
         return self.async_show_form(
             step_id="settings",
             data_schema=vol.Schema(
                 {
                     vol.Required(OPT_SCAN_INTERVAL, default=current): vol.All(
-                        vol.Coerce(int), vol.Range(min=MIN_SCAN_INTERVAL, max=300)
+                        vol.Coerce(int), vol.Range(min=minimum, max=300)
                     ),
                     vol.Required(OPT_SHOW_PANEL, default=show_panel): bool,
                 }
@@ -239,7 +293,7 @@ class BusMonitorOptionsFlow(OptionsFlow):
     ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
-            device_id = int(user_input["device"])
+            device_id = str(user_input["device"])
             loc = self._resolve_location(user_input, device_id)
             if not loc:
                 errors["base"] = "location_required"
