@@ -208,7 +208,9 @@ class BusMonitorConfigFlow(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, d
 
 
 class BusMonitorOptionsFlow(OptionsFlow):
-    """Add/remove bus profiles and checkpoints."""
+    """Add/edit/remove bus profiles and checkpoints."""
+
+    _editing: str = ""  # profile id being edited
 
     def _profiles(self) -> dict[str, Any]:
         # Deep copy: editing the stored options in place makes Home Assistant see
@@ -259,7 +261,7 @@ class BusMonitorOptionsFlow(OptionsFlow):
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         return self.async_show_menu(
             step_id="init",
-            menu_options=["add_profile", "add_checkpoint", "remove", "settings"],
+            menu_options=["add_profile", "edit_profile", "add_checkpoint", "remove", "settings"],
         )
 
     async def async_step_settings(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
@@ -288,13 +290,57 @@ class BusMonitorOptionsFlow(OptionsFlow):
             ),
         )
 
+    def _profile_schema(self) -> vol.Schema:
+        """The bus profile form, shared by "add" and "edit"."""
+        return vol.Schema(
+            {
+                vol.Required("name"): str,
+                vol.Required("device"): selector.SelectSelector(
+                    selector.SelectSelectorConfig(options=self._device_options())
+                ),
+                vol.Optional("location"): _location_selector(),
+                vol.Optional("use_bus_position", default=False): bool,
+                vol.Optional("expected_arrival"): selector.TimeSelector(),
+                vol.Required("late_grace_min", default=10): vol.All(
+                    vol.Coerce(int), vol.Range(min=0, max=60)
+                ),
+                vol.Required("active_start", default="05:30:00"): selector.TimeSelector(),
+                vol.Required("active_end", default="09:30:00"): selector.TimeSelector(),
+                vol.Required("weekdays", default=["0", "1", "2", "3", "4"]): selector.SelectSelector(
+                    selector.SelectSelectorConfig(options=WEEKDAY_OPTIONS, multiple=True)
+                ),
+                vol.Required("offline_after_min", default=0): vol.All(
+                    vol.Coerce(int), vol.Range(min=0, max=120)
+                ),
+            }
+        )
+
+    @staticmethod
+    def _profile_fields(user_input: dict[str, Any], loc: dict[str, Any]) -> dict[str, Any]:
+        """Stored profile settings from the form (checkpoints are kept separately)."""
+        expected = user_input.get("expected_arrival")
+        return {
+            "device_id": str(user_input["device"]),
+            "name": user_input["name"],
+            "stop": {
+                "lat": loc["latitude"],
+                "lon": loc["longitude"],
+                "radius_m": loc.get("radius", 75),
+                "expected_arrival": _hhmm(expected) if expected else None,
+                "late_grace_min": int(user_input["late_grace_min"]),
+            },
+            "active_start": _hhmm(user_input["active_start"]),
+            "active_end": _hhmm(user_input["active_end"]),
+            "weekdays": [int(d) for d in user_input["weekdays"]],
+            "offline_after_min": int(user_input["offline_after_min"]),
+        }
+
     async def async_step_add_profile(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
-            device_id = str(user_input["device"])
-            loc = self._resolve_location(user_input, device_id)
+            loc = self._resolve_location(user_input, str(user_input["device"]))
             if not loc:
                 errors["base"] = "location_required"
             else:
@@ -303,49 +349,83 @@ class BusMonitorOptionsFlow(OptionsFlow):
                 if pid in profiles:
                     errors["name"] = "name_exists"
                 else:
-                    expected = user_input.get("expected_arrival")
-                    profiles[pid] = {
-                        "device_id": device_id,
-                        "name": user_input["name"],
-                        "stop": {
-                            "lat": loc["latitude"],
-                            "lon": loc["longitude"],
-                            "radius_m": loc.get("radius", 75),
-                            "expected_arrival": _hhmm(expected) if expected else None,
-                            "late_grace_min": int(user_input["late_grace_min"]),
-                        },
-                        "checkpoints": [],
-                        "active_start": _hhmm(user_input["active_start"]),
-                        "active_end": _hhmm(user_input["active_end"]),
-                        "weekdays": [int(d) for d in user_input["weekdays"]],
-                        "offline_after_min": int(user_input["offline_after_min"]),
-                    }
+                    profiles[pid] = {**self._profile_fields(user_input, loc), "checkpoints": []}
                     return self._save(profiles)
         return self.async_show_form(
-            step_id="add_profile",
-            errors=errors,
+            step_id="add_profile", errors=errors, data_schema=self._profile_schema()
+        )
+
+    async def async_step_edit_profile(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Pick the profile to change."""
+        if not self._profiles():
+            return self.async_abort(reason="no_profiles")
+        if user_input is not None:
+            self._editing = user_input["profile"]
+            return await self.async_step_edit_profile_details()
+        return self.async_show_form(
+            step_id="edit_profile",
             data_schema=vol.Schema(
                 {
-                    vol.Required("name"): str,
-                    vol.Required("device"): selector.SelectSelector(
-                        selector.SelectSelectorConfig(options=self._device_options())
-                    ),
-                    vol.Optional("location"): _location_selector(),
-                    vol.Optional("use_bus_position", default=False): bool,
-                    vol.Optional("expected_arrival"): selector.TimeSelector(),
-                    vol.Required("late_grace_min", default=10): vol.All(
-                        vol.Coerce(int), vol.Range(min=0, max=60)
-                    ),
-                    vol.Required("active_start", default="05:30:00"): selector.TimeSelector(),
-                    vol.Required("active_end", default="09:30:00"): selector.TimeSelector(),
-                    vol.Required("weekdays", default=["0", "1", "2", "3", "4"]): selector.SelectSelector(
-                        selector.SelectSelectorConfig(options=WEEKDAY_OPTIONS, multiple=True)
-                    ),
-                    vol.Required("offline_after_min", default=0): vol.All(
-                        vol.Coerce(int), vol.Range(min=0, max=120)
-                    ),
+                    vol.Required("profile"): selector.SelectSelector(
+                        selector.SelectSelectorConfig(options=self._profile_options())
+                    )
                 }
             ),
+        )
+
+    async def async_step_edit_profile_details(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Change a profile's name, bus, stop or schedule. Its id stays the same, so recorded
+        trips, checkpoints, entities and scripts that use `profile: <id>` keep working."""
+        errors: dict[str, str] = {}
+        profiles = self._profiles()
+        pid = self._editing
+        current = profiles[pid]
+        if user_input is not None:
+            loc = self._resolve_location(user_input, str(user_input["device"]))
+            taken = {
+                key
+                for other, p in profiles.items()
+                if other != pid
+                for key in (other, slugify(p.get("name", other)))
+            }
+            if not loc:
+                errors["base"] = "location_required"
+            elif slugify(user_input["name"]) in taken:
+                errors["name"] = "name_exists"
+            else:
+                fields = self._profile_fields(user_input, loc)
+                fields["stop"] = {**(current.get("stop") or {}), **fields["stop"]}
+                profiles[pid] = {**current, **fields}
+                return self._save(profiles)
+        stop = current.get("stop") or {}
+        suggested: dict[str, Any] = {
+            "name": current.get("name", pid),
+            "device": str(current["device_id"]),
+            "late_grace_min": stop.get("late_grace_min", 10),
+            "active_start": current.get("active_start", "05:30"),
+            "active_end": current.get("active_end", "09:30"),
+            "weekdays": [str(d) for d in current.get("weekdays", [0, 1, 2, 3, 4])],
+            "offline_after_min": current.get("offline_after_min", 0),
+        }
+        if stop:
+            suggested["location"] = {
+                "latitude": stop["lat"],
+                "longitude": stop["lon"],
+                "radius": stop.get("radius_m", 75),
+            }
+        if stop.get("expected_arrival"):
+            suggested["expected_arrival"] = stop["expected_arrival"]
+        return self.async_show_form(
+            step_id="edit_profile_details",
+            errors=errors,
+            data_schema=self.add_suggested_values_to_schema(
+                self._profile_schema(), user_input or suggested
+            ),
+            description_placeholders={"profile_id": pid},
         )
 
     async def async_step_add_checkpoint(

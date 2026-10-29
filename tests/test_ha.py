@@ -472,3 +472,87 @@ async def test_street_name_falls_back_to_nominatim_cross_street(hass: HomeAssist
         await ws.send_json({"id": 1, "type": "bus_monitor/street_name", "lat": lat, "lon": lon, "bearing": bearing})
         res = (await ws.receive_json())["result"]
     assert (res["name"], res["street"], res["source"]) == ("East 5th Street", "Oak Avenue", "nominatim")
+
+
+async def _edit(hass, entry, client, profile, changes):
+    with patch("custom_components.bus_monitor.TraccarClient", return_value=client):
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"next_step_id": "edit_profile"}
+        )
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"profile": profile}
+        )
+        assert result["step_id"] == "edit_profile_details"
+        current = {
+            "name": "Morning",
+            "device": "1",
+            "location": {"latitude": 40.0, "longitude": -75.0, "radius": 75},
+            "late_grace_min": 5,
+            "active_start": "00:00:00",
+            "active_end": "23:59:00",
+            "weekdays": ["0", "1", "2", "3", "4", "5", "6"],
+            "offline_after_min": 0,
+        }
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {**current, **changes}
+        )
+        await hass.async_block_till_done()
+    return result
+
+
+async def test_edit_profile_renames_and_keeps_id_checkpoints_and_entities(hass: HomeAssistant):
+    client = _client([_pos(39.98, datetime.now(UTC))])
+    entry = await _setup(hass, client)
+    status_id = "sensor.bus_12_morning_status"
+    assert hass.states.get(status_id) is not None
+
+    result = await _edit(
+        hass, entry, client, "morning",
+        {"name": "Daniel's ride", "active_start": "06:15:00", "weekdays": ["0", "2", "4"]},
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    profile = entry.options["profiles"]["morning"]  # same id
+    assert profile["name"] == "Daniel's ride"
+    assert (profile["active_start"], profile["weekdays"]) == ("06:15", [0, 2, 4])
+    assert [c["label"] for c in profile["checkpoints"]] == ["5 min"]
+    assert entry.runtime_data.trackers["morning"].config.name == "Daniel's ride"
+    state = hass.states.get(status_id)  # entity id unchanged, display name updated
+    assert state is not None and "Daniel's ride" in state.attributes["friendly_name"]
+
+
+async def test_edit_profile_rejects_another_profiles_name(hass: HomeAssistant):
+    client = _client([_pos(39.98, datetime.now(UTC))])
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        data=DATA,
+        options={"profiles": {"morning": PROFILE, "afternoon": {**PROFILE, "name": "Afternoon"}}},
+    )
+    entry.add_to_hass(hass)
+    with patch("custom_components.bus_monitor.TraccarClient", return_value=client):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    result = await _edit(hass, entry, client, "morning", {"name": "afternoon"})
+    assert result["errors"] == {"name": "name_exists"}
+    assert entry.options["profiles"]["morning"]["name"] == "Morning"
+
+
+async def test_edit_profile_moves_the_stop(hass: HomeAssistant):
+    client = _client([_pos(39.98, datetime.now(UTC))])
+    entry = await _setup(hass, client)
+    await _edit(
+        hass, entry, client, "morning",
+        {
+            "location": {"latitude": 40.01, "longitude": -75.02, "radius": 120},
+            "expected_arrival": "07:40:00",
+            "late_grace_min": 3,
+        },
+    )
+    stop = entry.options["profiles"]["morning"]["stop"]
+    assert (stop["lat"], stop["lon"], stop["radius_m"]) == (40.01, -75.02, 120)
+    assert (stop["expected_arrival"], stop["late_grace_min"]) == ("07:40", 3)
+    cfg = entry.runtime_data.trackers["morning"].config
+    assert (cfg.stop.lat, cfg.stop.radius_m) == (40.01, 120)

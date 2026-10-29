@@ -34,6 +34,8 @@ Bouncie login). Each bus profile follows one vehicle from its entry.
    **Bouncie** and sign in (one-time app setup: [docs/bouncie.md](docs/bouncie.md)). Then
    choose the bus(es).
 4. Configure -> **Add a bus profile**, then **Add an alert checkpoint** (repeat per alert).
+   Use **Edit a bus profile** later to rename it or change its bus, stop or schedule; its
+   checkpoints, recorded trips and entity IDs are kept.
    Tip: tick *Use the bus's current position* while the bus is at the spot you want.
 
 > Security (Traccar): the server only speaks plain HTTP and the login is shared by all parents, so
