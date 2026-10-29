@@ -117,7 +117,7 @@ async def test_bouncie_entry_tracks_and_alerts(hass: HomeAssistant):
     client.positions.return_value = [Position(IMEI, 39.9905, -75.0, now, speed_mps=5, course=0.0)]
     async_fire_time_changed(hass, datetime.now(UTC) + timedelta(seconds=60))
     await hass.async_block_till_done()
-    assert [(e.data["label"], e.data["bus"]) for e in events] == [("5 min", "Bus Carpool van")]
+    assert [(e.data["label"], e.data["bus"]) for e in events] == [("5 min", "Carpool van")]
 
 
 @pytest.mark.usefixtures("credentials")

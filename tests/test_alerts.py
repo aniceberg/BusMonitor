@@ -154,6 +154,10 @@ def test_bus_label():
     assert bus_label("12") == "Bus 12"
     assert bus_label("18 Orange") == "Bus 18 Orange"
     assert bus_label("Bus 12") == "Bus 12"
+    assert bus_label("7A") == "Bus 7A"
+    assert bus_label("Oleg's bus") == "Oleg's bus"
+    assert bus_label("Carpool van") == "Carpool van"
+    assert bus_label("12 bus") == "12 bus"
 
 
 def test_no_late_alarm_when_watching_starts_after_the_deadline():
