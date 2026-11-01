@@ -83,7 +83,7 @@ def test_shadow_checkpoint_is_flagged_and_does_not_suppress_live():
 def test_running_late_before_first_checkpoint():
     stop = StopConfig(STOP_LAT, STOP_LON, 75, expected_arrival=time(7, 30), late_grace_min=5)
     tracker = TripTracker(make_config(stop=stop))
-    tracker.update(pos(39.950, speed_mps=0), MONDAY_7AM)
+    tracker.update(pos(39.950, speed_mps=5), MONDAY_7AM)  # running, but far off
     # deadline = 07:30 - 10 + 5 = 07:25
     assert tracker.tick(MONDAY_7AM + timedelta(minutes=24)) == []
     late = tracker.tick(MONDAY_7AM + timedelta(minutes=26))

@@ -130,10 +130,10 @@ async def test_traccar_and_bouncie_entries_side_by_side(hass: HomeAssistant):
     bouncie = _entry(devices=["1"])
     bouncie.add_to_hass(hass)
     traccar.add_to_hass(hass)
-    bouncie_client = _bouncie([Position("1", 39.98, -75.0, now)])
+    bouncie_client = _bouncie([Position("1", 39.98, -75.0, now, speed_mps=5)])
     bouncie_client.devices.return_value = [Device("1", "Carpool van", "VIN1")]
     with (
-        patch("custom_components.bus_monitor.TraccarClient", return_value=_client([Position("1", 39.98, -75.0, now)])),
+        patch("custom_components.bus_monitor.TraccarClient", return_value=_client([Position("1", 39.98, -75.0, now, speed_mps=5)])),
         patch("custom_components.bus_monitor.BouncieClient", return_value=bouncie_client),
     ):
         hass.config_entries.async_update_entry(

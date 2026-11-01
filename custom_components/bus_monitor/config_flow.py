@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import logging
 from collections.abc import Mapping
-from datetime import time
+from datetime import date, time
 from typing import Any
 
 import aiohttp
@@ -14,6 +14,7 @@ from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntry, ConfigFlowR
 from homeassistant.core import callback
 from homeassistant.helpers import config_entry_oauth2_flow, selector
 from homeassistant.helpers.aiohttp_client import async_create_clientsession, async_get_clientsession
+from homeassistant.util import dt as dt_util
 from homeassistant.util import slugify
 
 from .const import (
@@ -32,7 +33,7 @@ from .const import (
 )
 from .geocoder import GeocodeError
 from .locator import async_street_name
-from .models import KIND_STREET, KIND_TIME
+from .models import KIND_STREET, KIND_TIME, default_season_end
 from .providers import CannotConnect, Device, InvalidAuth
 from .providers.bouncie import BouncieClient, FixedToken
 from .providers.traccar import TraccarClient
@@ -56,6 +57,7 @@ class BusMonitorConfigFlow(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, d
 
     DOMAIN = DOMAIN
     VERSION = 2
+    MINOR_VERSION = 2
 
     def __init__(self) -> None:
         super().__init__()
@@ -223,12 +225,15 @@ class BusMonitorOptionsFlow(OptionsFlow):
         )
 
     def _device_options(self) -> list[selector.SelectOptionDict]:
+        """The buses in use first, then every other vehicle the provider account can see,
+        so a profile can move to a bus that wasn't picked at setup."""
         coord = getattr(self.config_entry, "runtime_data", None)
+        devices = coord.devices if coord else {}
+        in_use = list(coord.device_ids) if coord else list(map(str, self.config_entry.data[CONF_DEVICES]))
+        others = sorted((i for i in devices if i not in in_use), key=lambda i: devices[i].name.lower())
         return [
-            selector.SelectOptionDict(
-                value=i, label=coord.devices[i].name if coord and i in coord.devices else i
-            )
-            for i in map(str, self.config_entry.data[CONF_DEVICES])
+            selector.SelectOptionDict(value=i, label=devices[i].name if i in devices else i)
+            for i in in_use + others
         ]
 
     def _profile_options(self) -> list[selector.SelectOptionDict]:
@@ -290,9 +295,10 @@ class BusMonitorOptionsFlow(OptionsFlow):
             ),
         )
 
-    def _profile_schema(self) -> vol.Schema:
+    def _profile_schema(self, edit: bool = False) -> vol.Schema:
         """The bus profile form, shared by "add" and "edit"."""
-        return vol.Schema(
+        season_end = default_season_end(dt_util.now().date()).isoformat()
+        schema = vol.Schema(
             {
                 vol.Required("name"): str,
                 vol.Optional("announce_as"): str,
@@ -313,8 +319,18 @@ class BusMonitorOptionsFlow(OptionsFlow):
                 vol.Required("offline_after_min", default=0): vol.All(
                     vol.Coerce(int), vol.Range(min=0, max=120)
                 ),
+                vol.Required("season_end", default=season_end): selector.DateSelector(),
             }
         )
+        if edit:
+            schema = schema.extend({vol.Optional("relearn", default=False): bool})
+        return schema
+
+    @staticmethod
+    def _season_end_error(user_input: dict[str, Any]) -> dict[str, str]:
+        if date.fromisoformat(user_input["season_end"]) < dt_util.now().date():
+            return {"season_end": "season_end_past"}
+        return {}
 
     @staticmethod
     def _profile_fields(user_input: dict[str, Any], loc: dict[str, Any]) -> dict[str, Any]:
@@ -335,6 +351,7 @@ class BusMonitorOptionsFlow(OptionsFlow):
             "active_end": _hhmm(user_input["active_end"]),
             "weekdays": [int(d) for d in user_input["weekdays"]],
             "offline_after_min": int(user_input["offline_after_min"]),
+            "season_end": user_input["season_end"],
         }
 
     def _taken_names(self, except_id: str | None = None) -> set[str]:
@@ -356,6 +373,8 @@ class BusMonitorOptionsFlow(OptionsFlow):
             loc = self._resolve_location(user_input, str(user_input["device"]))
             if not loc:
                 errors["base"] = "location_required"
+            elif season_error := self._season_end_error(user_input):
+                errors.update(season_error)
             else:
                 profiles = self._profiles()
                 pid = slugify(user_input["name"])
@@ -403,10 +422,15 @@ class BusMonitorOptionsFlow(OptionsFlow):
                 errors["base"] = "location_required"
             elif slugify(user_input["name"]) in self._taken_names(except_id=pid):
                 errors["name"] = "name_exists"
+            elif season_error := self._season_end_error(user_input):
+                errors.update(season_error)
             else:
                 fields = self._profile_fields(user_input, loc)
                 fields["stop"] = {**(current.get("stop") or {}), **fields["stop"]}
                 profiles[pid] = {**current, **fields}
+                coord = getattr(self.config_entry, "runtime_data", None)
+                if user_input.get("relearn") and coord is not None:
+                    await coord.async_forget_trips(pid)
                 return self._save(profiles)
         stop = current.get("stop") or {}
         suggested: dict[str, Any] = {
@@ -418,7 +442,13 @@ class BusMonitorOptionsFlow(OptionsFlow):
             "active_end": current.get("active_end", "09:30"),
             "weekdays": [str(d) for d in current.get("weekdays", [0, 1, 2, 3, 4])],
             "offline_after_min": current.get("offline_after_min", 0),
+            "relearn": False,
         }
+        today = dt_util.now().date()
+        if current.get("season_end") and date.fromisoformat(current["season_end"]) >= today:
+            suggested["season_end"] = current["season_end"]
+        else:  # paused for the summer (or never set): suggest the coming school year's end
+            suggested["season_end"] = default_season_end(today).isoformat()
         if stop:
             suggested["location"] = {
                 "latitude": stop["lat"],
@@ -431,7 +461,7 @@ class BusMonitorOptionsFlow(OptionsFlow):
             step_id="edit_profile_details",
             errors=errors,
             data_schema=self.add_suggested_values_to_schema(
-                self._profile_schema(), user_input or suggested
+                self._profile_schema(edit=True), user_input or suggested
             ),
             description_placeholders={"profile_id": pid},
         )

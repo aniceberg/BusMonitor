@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
@@ -39,6 +40,9 @@ TRAIL_SAVE_INTERVAL_S = 60
 MIN_TRIPS_FOR_MEASURED_LEAD = 3
 # Auto-placed checkpoints stay where the user put them until this many trips exist.
 MIN_AUTO_TRIPS = 5
+# Polling rate while watching for a bus that hasn't moved yet today (it may be a holiday).
+# Under MAX_SEGMENT_GAP, so checkpoint crossings still work from the first fixes.
+IDLE_SCAN_INTERVAL = timedelta(seconds=60)
 
 
 class BusMonitorCoordinator(DataUpdateCoordinator[dict[str, Position]]):
@@ -56,12 +60,13 @@ class BusMonitorCoordinator(DataUpdateCoordinator[dict[str, Position]]):
     ) -> None:
         default, minimum = SCAN_INTERVALS[entry.data.get(CONF_PROVIDER, PROVIDER_TRACCAR)]
         interval = max(minimum, int(entry.options.get(OPT_SCAN_INTERVAL, default)))
+        self.fast_interval = timedelta(seconds=interval)
         super().__init__(
             hass,
             _LOGGER,
             config_entry=entry,
             name=DOMAIN,
-            update_interval=timedelta(seconds=interval),
+            update_interval=self.fast_interval,
         )
         self.client = client
         self.device_ids = device_ids
@@ -207,7 +212,45 @@ class BusMonitorCoordinator(DataUpdateCoordinator[dict[str, Position]]):
                     self._apply_auto_positions(tracker)
                     self._update_leads(tracker)
         self._maybe_save(force=save)
+        self._set_interval(now)
+        self._update_season_issues(now)
         return data
+
+    def _set_interval(self, now: datetime) -> None:
+        """Normal rate once a watched bus is moving; slower while waiting to see whether a
+        bus runs today. (Outside the watch windows the provider isn't called at all.)"""
+        trackers = self.trackers.values()
+        if any(t.wants_fast_position(now) for t in trackers):
+            self.update_interval = self.fast_interval
+        elif any(t.wants_position(now) for t in trackers):
+            self.update_interval = max(IDLE_SCAN_INTERVAL, self.fast_interval)
+        else:
+            self.update_interval = self.fast_interval
+
+    def _season_issue_id(self, profile_id: str) -> str:
+        return f"season_over_{self.config_entry.entry_id}_{profile_id}"
+
+    def _update_season_issues(self, now: datetime) -> None:
+        """Tell the parent (Settings -> Repairs) when a profile pauses for the summer."""
+        for pid, tracker in self.trackers.items():
+            issue_id = self._season_issue_id(pid)
+            if tracker.season_over(now):
+                ir.async_create_issue(
+                    self.hass,
+                    DOMAIN,
+                    issue_id,
+                    is_fixable=False,
+                    severity=ir.IssueSeverity.WARNING,
+                    translation_key="season_over",
+                    translation_placeholders={"profile": tracker.config.name},
+                )
+            else:
+                ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+
+    async def async_forget_trips(self, profile_id: str) -> None:
+        """Relearn a profile's route: drop its recorded trips (saved before the reload)."""
+        self.recorder.forget(profile_id)
+        await self.store.async_save(self.data_to_save())
 
     def _publish(self, alert: Alert) -> None:
         if alert.kind == "checkpoint" and not alert.announce:

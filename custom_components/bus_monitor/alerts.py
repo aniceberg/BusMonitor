@@ -13,11 +13,18 @@ MAX_SEGMENT_GAP = timedelta(seconds=120)
 # Ignore tiny movements when deriving heading from consecutive fixes.
 MIN_HEADING_MOVE_M = 15.0
 MIN_COURSE_SPEED_MPS = 1.0
+# The bus counts as running today once a fix from today's window shows it driving
+# faster than this, or this far from the first fix seen in the window (more than GPS
+# drift, so a parked tracker that keeps reporting doesn't count).
+MOVING_SPEED_MPS = 2.0
+MOVED_DISTANCE_M = 200.0
 
 STATUS_IDLE = "idle"
 STATUS_EN_ROUTE = "en_route"
 STATUS_NEAR = "near"
 STATUS_ARRIVED = "arrived"
+STATUS_NOT_RUNNING = "not_running"  # the bus never moved before its give-up time today
+STATUS_SEASON_OVER = "season_over"  # the school year ended; the profile is paused
 
 
 class TripTracker:
@@ -45,6 +52,10 @@ class TripTracker:
         self.arrival_time: datetime | None = None
         self.late_fired = False
         self.offline_fired = False
+        # Whether the bus has shown it's running today. Until it has, the coordinator polls
+        # slowly, and "running late" / "no GPS fix" stay silent (holidays, snow days).
+        self.moved_today = False
+        self.day_origin: Position | None = None
         # When this tracker started watching today's window. "Late" only fires for a
         # deadline that passed while we were watching: after a restart we can't tell
         # whether the bus already came, so we stay quiet rather than raise a false alarm.
@@ -63,6 +74,7 @@ class TripTracker:
             "arrival": self.arrival_time.isoformat() if self.arrival_time else None,
             "late_fired": self.late_fired,
             "offline_fired": self.offline_fired,
+            "moved": self.moved_today,
         }
 
     def restore(self, data: dict | None, today: date) -> None:
@@ -77,19 +89,54 @@ class TripTracker:
         self.arrival_time = datetime.fromisoformat(arrival) if arrival else None
         self.late_fired = bool(data.get("late_fired"))
         self.offline_fired = bool(data.get("offline_fired"))
+        self.moved_today = bool(data.get("moved"))
 
     @property
     def arrived(self) -> bool:
         return self.arrival_time is not None
 
+    def season_over(self, now: datetime) -> bool:
+        end = self.config.season_end
+        return end is not None and now.date() > end
+
     def is_active(self, now: datetime) -> bool:
         cfg = self.config
-        return now.weekday() in cfg.weekdays and cfg.active_start <= now.time() <= cfg.active_end
+        return (
+            now.weekday() in cfg.weekdays
+            and cfg.active_start <= now.time() <= cfg.active_end
+            and not self.season_over(now)
+        )
+
+    def _today(self, now: datetime) -> bool:
+        return self.trip_date == now.date()
+
+    def gave_up(self, now: datetime) -> bool:
+        """No sign of the bus by the time it should have reached the stop (plus the late
+        tolerance): treat today as a no-bus day (holiday, snow day) and stop watching."""
+        stop = self.config.stop
+        if self._today(now) and (self.arrived or self.moved_today):
+            return False
+        if stop is None or stop.expected_arrival is None:
+            return False  # watch until the window ends, as before
+        expected = datetime.combine(now.date(), stop.expected_arrival, tzinfo=now.tzinfo)
+        return now > expected + timedelta(minutes=stop.late_grace_min)
 
     def wants_position(self, now: datetime) -> bool:
-        """True while a fresh fix matters: inside the watch window, until today's arrival."""
-        arrived_today = self.arrived and self.trip_date == now.date()
-        return self.is_active(now) and not arrived_today
+        """True while a fresh fix matters: inside the watch window, until today's arrival
+        (or until the give-up time on a day the bus never moved)."""
+        arrived_today = self.arrived and self._today(now)
+        return self.is_active(now) and not arrived_today and not self.gave_up(now)
+
+    def wants_fast_position(self, now: datetime) -> bool:
+        """Watching and the bus is running today: poll at the normal rate."""
+        return self.wants_position(now) and self.moved_today and self._today(now)
+
+    def display_status(self, now: datetime) -> str:
+        if self.season_over(now):
+            return STATUS_SEASON_OVER
+        if self.is_active(now) and self.gave_up(now):
+            return STATUS_NOT_RUNNING
+        return self.status
 
     # -- position updates ---------------------------------------------------
     def update(self, pos: Position, now: datetime) -> list[Alert]:
@@ -105,6 +152,7 @@ class TripTracker:
         if not self.is_active(now) or not pos.valid:
             return []
         self.watching_since = self.watching_since or now
+        self._note_movement(pos, now)
 
         if not self.seeded:
             self._seed(pos)
@@ -118,7 +166,7 @@ class TripTracker:
             # announced "running late" minutes after the bus had come. Use a second
             # profile for a second trip (e.g. the afternoon run).
             return []
-        if self.status == STATUS_IDLE:
+        if self.status == STATUS_IDLE and self.moved_today:
             self.status = STATUS_EN_ROUTE
 
         alerts: list[Alert] = []
@@ -146,6 +194,11 @@ class TripTracker:
         self.watching_since = self.watching_since or now
         cfg = self.config
         alerts: list[Alert] = []
+
+        if not self.moved_today:
+            # No sign of the bus today: most likely there's no bus (a holiday), so don't
+            # announce "running late" or "no GPS fix".
+            return alerts
 
         stop = cfg.stop
         if stop is not None and stop.expected_arrival is not None and not self.late_fired:
@@ -208,6 +261,18 @@ class TripTracker:
             }
         return None
 
+    def _note_movement(self, pos: Position, now: datetime) -> None:
+        if self.moved_today:
+            return
+        window_start = datetime.combine(now.date(), self.config.active_start, tzinfo=now.tzinfo)
+        if self.day_origin is None:
+            self.day_origin = pos  # may be yesterday's fix where the bus was parked
+        if pos.fix_time < window_start:
+            return  # an old fix says nothing about today
+        moved = haversine_m(pos.lat, pos.lon, self.day_origin.lat, self.day_origin.lon)
+        if pos.speed_mps > MOVING_SPEED_MPS or moved > MOVED_DISTANCE_M:
+            self.moved_today = True
+
     def _seed(self, pos: Position) -> None:
         """First fix after a (re)start: adopt where the bus is without alerting.
 
@@ -224,7 +289,7 @@ class TripTracker:
             self.status = STATUS_ARRIVED
             self.fired.update(c.label for c in cfg.checkpoints)
             return
-        if self.status == STATUS_IDLE:
+        if self.status == STATUS_IDLE and self.moved_today:
             self.status = STATUS_EN_ROUTE
         for c in cfg.checkpoints:
             if haversine_m(pos.lat, pos.lon, c.lat, c.lon) <= c.radius_m:
@@ -236,6 +301,7 @@ class TripTracker:
             self.reset(now.date())
             # keep the latest fix so a stale fix isn't re-processed as new
             self.last_fix, self.last_pos, self.prev = fix, pos, prev
+            self.day_origin = pos  # where the bus was parked overnight
 
     def _process_checkpoints(
         self,

@@ -394,19 +394,20 @@ async def test_street_name_websocket(hass: HomeAssistant, hass_ws_client):
     assert res["name"] == "3rd Street" and res["street"] == "Oak Ave"
 
 
-def _line_trip(day: int):
+def _line_trip(days_ago: int, profile: str = "morning"):
+    """A recorded trip from a few days back (recent: older trips age out when loaded)."""
     from custom_components.bus_monitor.calibration import TripRecord
 
-    t0 = datetime(2026, 10, day, 12, 0, tzinfo=UTC)
+    t0 = datetime.now(UTC).replace(hour=12, minute=0, second=0, microsecond=0) - timedelta(days=days_ago)
     trail = [(t0 + timedelta(seconds=15 * i), 39.970 + i * 0.0005, -75.0, 5.0) for i in range(61)]
-    return TripRecord("morning", f"2026-10-{day:02d}", trail[-1][0], {}, trail)
+    return TripRecord(profile, t0.date().isoformat(), trail[-1][0], {}, trail)
 
 
 async def test_auto_placed_checkpoint_moves_to_typical_spot_without_reload(hass: HomeAssistant, hass_storage, hass_ws_client):
     hass_storage["bus_monitor.trips.auto_test"] = {
         "version": 1,
         "key": "bus_monitor.trips.auto_test",
-        "data": {"trips": [_line_trip(d).as_dict() for d in range(13, 19)]},
+        "data": {"trips": [_line_trip(d).as_dict() for d in range(1, 7)]},
     }
     profile = {
         **PROFILE,
@@ -624,3 +625,28 @@ async def test_profile_name_must_be_unique_across_entries(hass: HomeAssistant):
             },
         )
     assert result["errors"] == {"name": "name_exists"}
+
+
+async def test_edit_profile_can_switch_to_a_bus_not_picked_at_setup(hass: HomeAssistant):
+    """New school year, new bus: any vehicle on the account can be chosen, no re-setup."""
+    client = _client([_pos(39.98, datetime.now(UTC)), Position("2", 39.95, -75.0, datetime.now(UTC))])
+    entry = await _setup(hass, client)
+    assert hass.states.get("device_tracker.bus_34") is None  # only Bus 12 was picked
+
+    with patch("custom_components.bus_monitor.TraccarClient", return_value=client):
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"next_step_id": "edit_profile"}
+        )
+        result = await hass.config_entries.options.async_configure(result["flow_id"], {"profile": "morning"})
+    options = result["data_schema"].schema["device"].config["options"]
+    assert [(o["value"], o["label"]) for o in options] == [("1", "Bus 12"), ("2", "Bus 34")]
+
+    await _edit(hass, entry, client, "morning", {"device": "2"})
+    await hass.async_block_till_done()
+    assert entry.data["devices"] == ["1"]  # the connection is untouched
+    coord = entry.runtime_data
+    assert coord.trackers["morning"].config.device_id == "2" and "2" in coord.device_ids
+    assert coord.trackers["morning"].config.bus_name == "Bus 34"
+    assert hass.states.get("device_tracker.bus_34") is not None
+    assert hass.states.get("sensor.bus_12_morning_status") is not None  # entity ids are kept
