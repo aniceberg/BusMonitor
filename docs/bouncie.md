@@ -30,14 +30,14 @@ by default through `default_config`). Your browser must be able to reach your Ho
 Settings → Devices & services → Add → **Bus Monitor** → **Bouncie**.
 1. Sign in to Bouncie and approve access.
 2. Choose the vehicle(s) to track.
-3. Configure → **Add a bus profile**, as with Traccar.
+3. Choose **Add bus profile** under the Bouncie account, as with Traccar.
 
 If Bouncie later asks you to sign in again, for example because the token wasn't used for a long
 time, Home Assistant shows a **Reauthenticate** prompt. Sign in to the *same* Bouncie account.
 
 ## How fresh are the positions?
 Bus Monitor asks Bouncie for each vehicle's last known location every 30 seconds by default (the
-minimum is 15; change it under Configure → Settings). It only does this while a profile is
+minimum is 15; change it under the Bouncie account's Configure). It only does this while a profile is
 watching: inside its watch window, until the bus reaches the stop. Outside that it doesn't call
 Bouncie at all, except once when you ask "where is the bus?".
 

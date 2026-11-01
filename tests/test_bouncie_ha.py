@@ -21,6 +21,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry, async_
 
 from custom_components.bus_monitor.const import DOMAIN, EVENT_ALERT
 from custom_components.bus_monitor.models import Position
+from custom_components.bus_monitor.profiles import entry_profiles
 from custom_components.bus_monitor.providers import Device, InvalidAuth
 from custom_components.bus_monitor.providers.bouncie import AUTHORIZE_URL, TOKEN_URL
 
@@ -147,8 +148,8 @@ async def test_traccar_and_bouncie_entries_side_by_side(hass: HomeAssistant):
     assert reg.async_get_device_by_identifier(ident, traccar.entry_id).manufacturer == "Traccar"
     assert reg.async_get_device_by_identifier(ident, bouncie.entry_id).manufacturer == "Bouncie"
     assert hass.states.get("device_tracker.bus_12") and hass.states.get("device_tracker.carpool_van")
-    assert hass.states.get("sensor.bus_12_morning_status").state == "en_route"
-    assert hass.states.get("sensor.carpool_van_carpool_status").state == "en_route"
+    assert hass.states.get("sensor.morning_status").state == "en_route"
+    assert hass.states.get("sensor.carpool_status").state == "en_route"
 
 
 async def test_v1_traccar_entry_migrates_and_keeps_entities(hass: HomeAssistant):
@@ -172,7 +173,8 @@ async def test_v1_traccar_entry_migrates_and_keeps_entities(hass: HomeAssistant)
 
     assert entry.version == 2
     assert entry.data == DATA
-    assert entry.options["profiles"]["morning"]["device_id"] == "1"
+    assert entry_profiles(entry)["morning"]["device_id"] == "1"
+    assert "profiles" not in entry.options
     assert entry.options["scan_interval"] == 20
     assert hass.states.get("device_tracker.bus_12") is not None
     assert hass.states.get("device_tracker.bus_12_2") is None

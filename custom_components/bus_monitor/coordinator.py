@@ -22,7 +22,6 @@ from .const import (
     DOMAIN,
     EVENT_ALERT,
     EVENT_SHADOW,
-    OPT_PROFILES,
     OPT_SCAN_INTERVAL,
     PROVIDER_TRACCAR,
     SCAN_INTERVALS,
@@ -31,6 +30,7 @@ from .const import (
 )
 from .geocoder import OverpassGeocoder
 from .models import Alert, BusConfig, Position, bus_label
+from .profiles import profile_settings, profile_subentries
 from .providers import CannotConnect, Device, InvalidAuth, Provider
 
 _LOGGER = logging.getLogger(__name__)
@@ -80,7 +80,11 @@ class BusMonitorCoordinator(DataUpdateCoordinator[dict[str, Position]]):
         self._base_configs: dict[str, BusConfig] = {}
         self.auto_positions: dict[str, dict[str, list]] = {}  # profile -> label -> [lat, lon, trips]
         self._last_save = 0.0
-        for profile_id, raw in (entry.options.get(OPT_PROFILES) or {}).items():
+        self.subentry_ids: dict[str, str] = {}  # profile id -> its config subentry
+        self.bus_devices: dict[str, str] = {}  # provider device id -> device registry id
+        for profile_id, sub in profile_subentries(entry).items():
+            self.subentry_ids[profile_id] = sub.subentry_id
+            raw = profile_settings(sub)
             cfg = BusConfig.from_dict(profile_id, raw)
             if not cfg.bus_name and (device := devices.get(cfg.device_id)):
                 cfg = replace(cfg, bus_name=bus_label(device.name))

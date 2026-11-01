@@ -60,107 +60,12 @@
   "options": {
     "step": {
       "init": {
-        "title": "Bus Monitor",
-        "menu_options": {
-          "add_profile": "Add a bus profile (bus + stop + schedule)",
-          "edit_profile": "Edit a bus profile (rename, stop, schedule)",
-          "add_checkpoint": "Add an alert checkpoint",
-          "remove": "Remove a profile or checkpoints",
-          "settings": "Settings (polling, sidebar)"
-        }
-      },
-      "add_profile": {
-        "title": "Add a bus profile",
-        "description": "Pick the stop on the map, or tick 'use bus position' to use where the bus is right now. Make one profile for the morning and another for the afternoon if the times differ.",
-        "data": {
-          "name": "Profile name",
-          "announce_as": "Announce as (optional)",
-          "device": "Bus",
-          "location": "Stop location and arrival radius",
-          "use_bus_position": "Use the bus's current position instead",
-          "expected_arrival": "Normal arrival time at the stop",
-          "late_grace_min": "Minutes behind schedule before 'running late'",
-          "active_start": "Watch from",
-          "active_end": "Watch until",
-          "weekdays": "Days",
-          "offline_after_min": "Alert if no GPS fix for N minutes (0 = off)",
-          "season_end": "School year ends"
-        },
-        "data_description": {
-          "announce_as": "What alerts and \"where is the bus?\" call this bus, e.g. \"Daniel's bus\". Leave empty to use the vehicle's name.",
-          "season_end": "Last school day. The profile pauses after it (no polling, no alerts) until you edit it and set the next school year's end.",
-          "device": "Any vehicle this account can see, including ones not picked when the integration was added (e.g. a new bus for the school year)."
-        }
-      },
-      "edit_profile": {
-        "title": "Edit a bus profile",
-        "data": {
-          "profile": "Profile"
-        }
-      },
-      "edit_profile_details": {
-        "title": "Edit a bus profile",
-        "description": "Change the name, bus, stop or schedule. Checkpoints, recorded trips and entity IDs are kept, and scripts keep working with profile: {profile_id}. After the summer pause, check the times and the stop and set when this school year ends.",
-        "data": {
-          "name": "Profile name",
-          "announce_as": "Announce as (optional)",
-          "device": "Bus",
-          "location": "Stop location and arrival radius",
-          "use_bus_position": "Use the bus's current position instead",
-          "expected_arrival": "Normal arrival time at the stop",
-          "late_grace_min": "Minutes behind schedule before 'running late'",
-          "active_start": "Watch from",
-          "active_end": "Watch until",
-          "weekdays": "Days",
-          "offline_after_min": "Alert if no GPS fix for N minutes (0 = off)",
-          "season_end": "School year ends",
-          "relearn": "Forget recorded trips and relearn the route"
-        },
-        "data_description": {
-          "announce_as": "What alerts and \"where is the bus?\" call this bus, e.g. \"Daniel's bus\". Leave empty to use the vehicle's name.",
-          "season_end": "Last school day. The profile pauses after it (no polling, no alerts) until you edit it and set the next school year's end.",
-          "relearn": "Tick if the route changed. Auto-placed checkpoints and measured timings start over; your own checkpoints stay where they are.",
-          "device": "Any vehicle this account can see, including ones not picked when the integration was added (e.g. a new bus for the school year)."
-        }
-      },
-      "add_checkpoint": {
-        "title": "Add an alert checkpoint",
-        "description": "Minutes-away checkpoints announce \"Bus 12 is about 10 minutes away\"; tick Auto-place to let recorded trips move it to where the bus usually is that many minutes out (from 5 trips). Street checkpoints announce \"Bus 12 is at Elm Street\"; leave the label blank to use the nearest cross street. Untick Announce to trial a spot silently.",
-        "data": {
-          "profile": "Profile",
-          "label": "Name (blank = automatic)",
-          "minutes": "Approx. minutes from the stop",
-          "location": "Checkpoint location and radius",
-          "use_bus_position": "Use the bus's current position instead",
-          "announce": "Announce (untick for shadow mode)",
-          "kind": "Type",
-          "auto_place": "Auto-place from recorded trips (minutes-away only)"
-        }
-      },
-      "remove": {
-        "title": "Remove",
-        "data": {
-          "profile": "Profile",
-          "checkpoints": "Checkpoints to remove",
-          "delete_profile": "Delete the whole profile instead"
-        }
-      },
-      "settings": {
         "title": "Settings",
         "data": {
           "scan_interval": "Seconds between GPS checks (only while watching for the bus)",
           "show_panel": "Show Bus Monitor map in the sidebar"
         }
       }
-    },
-    "error": {
-      "location_required": "Pick a location, or tick 'use bus position'.",
-      "name_exists": "That name is already used by another bus profile.",
-      "street_lookup_failed": "Couldn't look up the street name. Type a name, or try again in a minute.",
-      "season_end_past": "That date has already passed. Pick the last day of this school year."
-    },
-    "abort": {
-      "no_profiles": "Add a bus profile first."
     }
   },
   "services": {
@@ -213,7 +118,102 @@
   "issues": {
     "season_over": {
       "title": "{profile} is paused for the summer",
-      "description": "The school year set for {profile} has ended, so Bus Monitor stopped watching for the bus. Before school starts, open Bus Monitor → Configure → Edit a bus profile, check the times and the stop, set when the new school year ends and save. Tick \"relearn the route\" if the route changed."
+      "description": "The school year set for {profile} has ended, so Bus Monitor stopped watching for the bus. Before school starts, open Settings → Devices & services → Bus Monitor, find {profile}, choose ⋮ → Reconfigure → Edit the profile, check the times and the stop, set when the new school year ends and save. Tick \"relearn the route\" if the route changed."
+    }
+  },
+  "config_subentries": {
+    "bus_profile": {
+      "entry_type": "Bus profile",
+      "initiate_flow": {
+        "user": "Add bus profile",
+        "reconfigure": "Reconfigure bus profile"
+      },
+      "step": {
+        "user": {
+          "title": "Add a bus profile",
+          "description": "Pick the stop on the map, or tick 'use bus position' to use where the bus is right now. Make one profile for the morning and another for the afternoon if the times differ.",
+          "data": {
+            "name": "Profile name",
+            "announce_as": "Announce as (optional)",
+            "device": "Bus",
+            "location": "Stop location and arrival radius",
+            "use_bus_position": "Use the bus's current position instead",
+            "expected_arrival": "Normal arrival time at the stop",
+            "late_grace_min": "Minutes behind schedule before 'running late'",
+            "active_start": "Watch from",
+            "active_end": "Watch until",
+            "weekdays": "Days",
+            "offline_after_min": "Alert if no GPS fix for N minutes (0 = off)",
+            "season_end": "School year ends"
+          },
+          "data_description": {
+            "announce_as": "What alerts and \"where is the bus?\" call this bus, e.g. \"Daniel's bus\". Leave empty to use the vehicle's name.",
+            "season_end": "Last school day. The profile pauses after it (no polling, no alerts) until you edit it and set the next school year's end.",
+            "device": "Any vehicle this account can see, including ones not picked when the integration was added (e.g. a new bus for the school year)."
+          }
+        },
+        "reconfigure": {
+          "title": "{profile}",
+          "menu_options": {
+            "profile": "Edit the profile (name, bus, stop, schedule, school year)",
+            "add_checkpoint": "Add an alert checkpoint",
+            "remove_checkpoints": "Remove checkpoints"
+          }
+        },
+        "profile": {
+          "title": "Edit the bus profile",
+          "description": "Change the name, bus, stop or schedule. Checkpoints, recorded trips and entity IDs are kept, and scripts keep working with profile: {profile_id}. After the summer pause, check the times and the stop and set when this school year ends.",
+          "data": {
+            "name": "Profile name",
+            "announce_as": "Announce as (optional)",
+            "device": "Bus",
+            "location": "Stop location and arrival radius",
+            "use_bus_position": "Use the bus's current position instead",
+            "expected_arrival": "Normal arrival time at the stop",
+            "late_grace_min": "Minutes behind schedule before 'running late'",
+            "active_start": "Watch from",
+            "active_end": "Watch until",
+            "weekdays": "Days",
+            "offline_after_min": "Alert if no GPS fix for N minutes (0 = off)",
+            "season_end": "School year ends",
+            "relearn": "Forget recorded trips and relearn the route"
+          },
+          "data_description": {
+            "announce_as": "What alerts and \"where is the bus?\" call this bus, e.g. \"Daniel's bus\". Leave empty to use the vehicle's name.",
+            "season_end": "Last school day. The profile pauses after it (no polling, no alerts) until you edit it and set the next school year's end.",
+            "relearn": "Tick if the route changed. Auto-placed checkpoints and measured timings start over; your own checkpoints stay where they are.",
+            "device": "Any vehicle this account can see, including ones not picked when the integration was added (e.g. a new bus for the school year)."
+          }
+        },
+        "add_checkpoint": {
+          "title": "Add an alert checkpoint",
+          "description": "Minutes-away checkpoints announce \"Bus 12 is about 10 minutes away\"; tick Auto-place to let recorded trips move it to where the bus usually is that many minutes out (from 5 trips). Street checkpoints announce \"Bus 12 is at Elm Street\"; leave the label blank to use the nearest cross street. Untick Announce to trial a spot silently.",
+          "data": {
+            "label": "Name (blank = automatic)",
+            "minutes": "Approx. minutes from the stop",
+            "location": "Checkpoint location and radius",
+            "use_bus_position": "Use the bus's current position instead",
+            "announce": "Announce (untick for shadow mode)",
+            "kind": "Type",
+            "auto_place": "Auto-place from recorded trips (minutes-away only)"
+          }
+        },
+        "remove_checkpoints": {
+          "title": "Remove checkpoints",
+          "data": {
+            "checkpoints": "Checkpoints to remove"
+          }
+        }
+      },
+      "error": {
+        "location_required": "Pick a location, or tick 'use bus position'.",
+        "name_exists": "That name is already used by another bus profile.",
+        "street_lookup_failed": "Couldn't look up the street name. Type a name, or try again in a minute.",
+        "season_end_past": "That date has already passed. Pick the last day of this school year."
+      },
+      "abort": {
+        "no_checkpoints": "This profile has no checkpoints."
+      }
     }
   }
 }

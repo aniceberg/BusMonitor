@@ -584,7 +584,7 @@ class BusMonitorPanel extends HTMLElement {
     }
     const p = this._profile();
     if (!p) {
-      side.innerHTML = `<div class="empty muted">No bus profiles yet. Add one in Settings → Devices &amp; services → Bus Monitor → Configure.</div>`;
+      side.innerHTML = `<div class="empty muted">No bus profiles yet. Add one in Settings → Devices &amp; services → Bus Monitor → Add bus profile.</div>`;
       return;
     }
     const r = this._route;
