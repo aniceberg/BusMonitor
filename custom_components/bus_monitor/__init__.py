@@ -14,6 +14,7 @@ from homeassistant.exceptions import (
 )
 from homeassistant.helpers import config_entry_oauth2_flow
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.aiohttp_client import async_create_clientsession, async_get_clientsession
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
@@ -36,10 +37,12 @@ from .const import (
     STREETS_STORAGE_VERSION,
 )
 from .coordinator import BusMonitorCoordinator
+from .entity import bus_device_info
 from .geocoder import OverpassGeocoder
 from .locator import async_describe
 from .models import default_season_end
 from .panel import async_setup_frontend, async_update_panel
+from .profiles import entry_profiles, new_profile_subentry
 from .providers import CannotConnect, InvalidAuth, Provider
 from .providers.bouncie import BouncieClient
 from .providers.traccar import TraccarClient
@@ -85,7 +88,8 @@ async def _async_provider(hass: HomeAssistant, entry: BusMonitorConfigEntry) -> 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """v1 (Traccar only, int device ids) -> v2 (provider key, str device ids);
-    2.1 -> 2.2 (every profile gets a school-year end, so it pauses for the summer)."""
+    2.1 -> 2.2 (every profile gets a school-year end, so it pauses for the summer);
+    2.2 -> 2.3 (profiles move from the options to subentries)."""
     if entry.version > 2:
         return False
     if entry.version == 1:
@@ -110,6 +114,13 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         }
         options = {**entry.options, OPT_PROFILES: profiles} if profiles else dict(entry.options)
         hass.config_entries.async_update_entry(entry, options=options, minor_version=2)
+    if entry.minor_version < 3:
+        # Each profile becomes its own subentry: listed under the provider, with its own
+        # Reconfigure and Delete. Ids (and so entities, trips and scripts) are unchanged.
+        for pid, settings in (entry.options.get(OPT_PROFILES) or {}).items():
+            hass.config_entries.async_add_subentry(entry, new_profile_subentry(pid, settings))
+        options = {k: v for k, v in entry.options.items() if k != OPT_PROFILES}
+        hass.config_entries.async_update_entry(entry, options=options, minor_version=3)
     return True
 
 
@@ -126,7 +137,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: BusMonitorConfigEntry) -
     # The buses picked at setup, plus any other vehicle on the account that a profile was
     # switched to later (e.g. the school assigned a new bus for the school year).
     device_ids = [str(i) for i in entry.data[CONF_DEVICES]]
-    for profile in (entry.options.get(OPT_PROFILES) or {}).values():
+    for profile in entry_profiles(entry).values():
         if (device_id := str(profile["device_id"])) not in device_ids:
             device_ids.append(device_id)
     coordinator = BusMonitorCoordinator(hass, entry, client, device_ids, devices)
@@ -134,6 +145,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: BusMonitorConfigEntry) -
     await coordinator.async_load()
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
+    # Register the buses first, so each profile's device can point at its bus.
+    dev_reg = dr.async_get(hass)
+    for device_id in device_ids:
+        coordinator.bus_devices[device_id] = dev_reg.async_get_or_create(
+            config_entry_id=entry.entry_id, **bus_device_info(coordinator, device_id)
+        ).id
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     async_register_websocket(hass)

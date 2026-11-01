@@ -28,16 +28,18 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: BusMonitorConfigEntry, async_add_entities: AddConfigEntryEntitiesCallback
 ) -> None:
     coordinator = entry.runtime_data
-    entities: list[ProfileEntity] = []
-    for tracker in coordinator.trackers.values():
-        entities.append(StatusSensor(coordinator, tracker))
-        entities.append(LastAlertSensor(coordinator, tracker))
+    for pid, tracker in coordinator.trackers.items():
+        entities: list[ProfileEntity] = [
+            StatusSensor(coordinator, tracker),
+            LastAlertSensor(coordinator, tracker),
+        ]
         if tracker.config.stop:
             entities.append(DistanceSensor(coordinator, tracker))
         entities.extend(
             BaselineSensor(coordinator, tracker, c.label) for c in tracker.config.checkpoints
         )
-    async_add_entities(entities)
+        # grouped under the profile's subentry, so deleting the profile removes them
+        async_add_entities(entities, config_subentry_id=coordinator.subentry_ids[pid])
 
 
 class StatusSensor(ProfileEntity, SensorEntity):
@@ -53,7 +55,7 @@ class StatusSensor(ProfileEntity, SensorEntity):
 
     def __init__(self, coordinator, tracker) -> None:
         super().__init__(coordinator, tracker, "status")
-        self._attr_name = f"{tracker.config.name} status"
+        self._attr_name = "Status"
 
     @property
     def native_value(self) -> str:
@@ -65,7 +67,7 @@ class LastAlertSensor(ProfileEntity, SensorEntity):
 
     def __init__(self, coordinator, tracker) -> None:
         super().__init__(coordinator, tracker, "last_alert")
-        self._attr_name = f"{tracker.config.name} last alert"
+        self._attr_name = "Last alert"
 
     @property
     def native_value(self) -> datetime | None:
@@ -87,7 +89,7 @@ class DistanceSensor(ProfileEntity, SensorEntity):
 
     def __init__(self, coordinator, tracker) -> None:
         super().__init__(coordinator, tracker, "distance")
-        self._attr_name = f"{tracker.config.name} distance to stop"
+        self._attr_name = "Distance to stop"
 
     @property
     def native_value(self) -> float | None:
@@ -108,7 +110,7 @@ class BaselineSensor(ProfileEntity, SensorEntity):
     def __init__(self, coordinator, tracker, label: str) -> None:
         super().__init__(coordinator, tracker, f"baseline_{label}")
         self._label = label
-        self._attr_name = f"{tracker.config.name} {label} actual minutes"
+        self._attr_name = f"{label} actual minutes"
 
     def _stats(self) -> dict | None:
         trips = self.coordinator.recorder.trips_for(self._tracker.config.profile_id)

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 import logging
 from collections.abc import Mapping
 from datetime import date, time
@@ -10,7 +9,14 @@ from typing import Any
 
 import aiohttp
 import voluptuous as vol
-from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntry, ConfigFlowResult, OptionsFlow
+from homeassistant.config_entries import (
+    SOURCE_REAUTH,
+    ConfigEntry,
+    ConfigFlowResult,
+    ConfigSubentryFlow,
+    OptionsFlow,
+    SubentryFlowResult,
+)
 from homeassistant.core import callback
 from homeassistant.helpers import config_entry_oauth2_flow, selector
 from homeassistant.helpers.aiohttp_client import async_create_clientsession, async_get_clientsession
@@ -21,19 +27,21 @@ from .const import (
     CONF_BASE_URL,
     CONF_DEVICES,
     CONF_PASSWORD,
+    CONF_PROFILE_ID,
     CONF_PROVIDER,
     CONF_USERNAME,
     DOMAIN,
-    OPT_PROFILES,
     OPT_SCAN_INTERVAL,
     OPT_SHOW_PANEL,
     PROVIDER_BOUNCIE,
     PROVIDER_TRACCAR,
     SCAN_INTERVALS,
+    SUBENTRY_PROFILE,
 )
 from .geocoder import GeocodeError
 from .locator import async_street_name
 from .models import KIND_STREET, KIND_TIME, default_season_end
+from .profiles import profile_settings, taken_names
 from .providers import CannotConnect, Device, InvalidAuth
 from .providers.bouncie import BouncieClient, FixedToken
 from .providers.traccar import TraccarClient
@@ -57,7 +65,7 @@ class BusMonitorConfigFlow(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, d
 
     DOMAIN = DOMAIN
     VERSION = 2
-    MINOR_VERSION = 2
+    MINOR_VERSION = 3
 
     def __init__(self) -> None:
         super().__init__()
@@ -208,42 +216,69 @@ class BusMonitorConfigFlow(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, d
     def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
         return BusMonitorOptionsFlow()
 
+    @classmethod
+    @callback
+    def async_get_supported_subentry_types(
+        cls, config_entry: ConfigEntry
+    ) -> dict[str, type[ConfigSubentryFlow]]:
+        return {SUBENTRY_PROFILE: BusProfileSubentryFlow}
+
 
 class BusMonitorOptionsFlow(OptionsFlow):
-    """Add/edit/remove bus profiles and checkpoints."""
+    """Settings for the provider connection (bus profiles are subentries)."""
 
-    _editing: str = ""  # profile id being edited
-
-    def _profiles(self) -> dict[str, Any]:
-        # Deep copy: editing the stored options in place makes Home Assistant see
-        # "no change", so it would neither save nor reload the entry.
-        return copy.deepcopy(dict(self.config_entry.options.get(OPT_PROFILES) or {}))
-
-    def _save(self, profiles: dict[str, Any], **extra: Any) -> ConfigFlowResult:
-        return self.async_create_entry(
-            data={**self.config_entry.options, OPT_PROFILES: profiles, **extra}
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        if user_input is not None:
+            return self.async_create_entry(
+                data={
+                    **self.config_entry.options,
+                    OPT_SCAN_INTERVAL: int(user_input[OPT_SCAN_INTERVAL]),
+                    OPT_SHOW_PANEL: bool(user_input[OPT_SHOW_PANEL]),
+                }
+            )
+        default, minimum = SCAN_INTERVALS[
+            self.config_entry.data.get(CONF_PROVIDER, PROVIDER_TRACCAR)
+        ]
+        current = self.config_entry.options.get(OPT_SCAN_INTERVAL, default)
+        show_panel = self.config_entry.options.get(OPT_SHOW_PANEL, True)
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(OPT_SCAN_INTERVAL, default=current): vol.All(
+                        vol.Coerce(int), vol.Range(min=minimum, max=300)
+                    ),
+                    vol.Required(OPT_SHOW_PANEL, default=show_panel): bool,
+                }
+            ),
         )
+
+
+class BusProfileSubentryFlow(ConfigSubentryFlow):
+    """Add a bus profile, or reconfigure one: its settings, or its checkpoints."""
+
+    @property
+    def _entry(self) -> ConfigEntry:
+        return self._get_entry()
+
+    @property
+    def _coord(self) -> Any:
+        return getattr(self._entry, "runtime_data", None)
 
     def _device_options(self) -> list[selector.SelectOptionDict]:
         """The buses in use first, then every other vehicle the provider account can see,
         so a profile can move to a bus that wasn't picked at setup."""
-        coord = getattr(self.config_entry, "runtime_data", None)
+        coord = self._coord
         devices = coord.devices if coord else {}
-        in_use = list(coord.device_ids) if coord else list(map(str, self.config_entry.data[CONF_DEVICES]))
+        in_use = list(coord.device_ids) if coord else list(map(str, self._entry.data[CONF_DEVICES]))
         others = sorted((i for i in devices if i not in in_use), key=lambda i: devices[i].name.lower())
         return [
             selector.SelectOptionDict(value=i, label=devices[i].name if i in devices else i)
             for i in in_use + others
         ]
 
-    def _profile_options(self) -> list[selector.SelectOptionDict]:
-        return [
-            selector.SelectOptionDict(value=pid, label=p.get("name", pid))
-            for pid, p in self._profiles().items()
-        ]
-
     def _bus_position(self, device_id: str) -> dict[str, float] | None:
-        coord = getattr(self.config_entry, "runtime_data", None)
+        coord = self._coord
         pos = coord.data.get(device_id) if coord and coord.data else None
         return {"latitude": pos.lat, "longitude": pos.lon} if pos else None
 
@@ -263,40 +298,8 @@ class BusMonitorOptionsFlow(OptionsFlow):
             return bus
         return loc
 
-    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        return self.async_show_menu(
-            step_id="init",
-            menu_options=["add_profile", "edit_profile", "add_checkpoint", "remove", "settings"],
-        )
-
-    async def async_step_settings(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        if user_input is not None:
-            return self._save(
-                self._profiles(),
-                **{
-                    OPT_SCAN_INTERVAL: int(user_input[OPT_SCAN_INTERVAL]),
-                    OPT_SHOW_PANEL: bool(user_input[OPT_SHOW_PANEL]),
-                },
-            )
-        default, minimum = SCAN_INTERVALS[
-            self.config_entry.data.get(CONF_PROVIDER, PROVIDER_TRACCAR)
-        ]
-        current = self.config_entry.options.get(OPT_SCAN_INTERVAL, default)
-        show_panel = self.config_entry.options.get(OPT_SHOW_PANEL, True)
-        return self.async_show_form(
-            step_id="settings",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(OPT_SCAN_INTERVAL, default=current): vol.All(
-                        vol.Coerce(int), vol.Range(min=minimum, max=300)
-                    ),
-                    vol.Required(OPT_SHOW_PANEL, default=show_panel): bool,
-                }
-            ),
-        )
-
     def _profile_schema(self, edit: bool = False) -> vol.Schema:
-        """The bus profile form, shared by "add" and "edit"."""
+        """The bus profile form, shared by "add" and "reconfigure"."""
         season_end = default_season_end(dt_util.now().date()).isoformat()
         schema = vol.Schema(
             {
@@ -354,84 +357,71 @@ class BusMonitorOptionsFlow(OptionsFlow):
             "season_end": user_input["season_end"],
         }
 
-    def _taken_names(self, except_id: str | None = None) -> set[str]:
-        """Profile ids and name slugs in use in any Bus Monitor entry (services and the map
-        find a profile by id across entries, so it must be unique everywhere)."""
-        taken: set[str] = set()
-        for entry in self.hass.config_entries.async_entries(DOMAIN):
-            for pid, p in (entry.options.get(OPT_PROFILES) or {}).items():
-                if entry.entry_id == self.config_entry.entry_id and pid == except_id:
-                    continue
-                taken.update((pid, slugify(p.get("name", pid))))
-        return taken
-
-    async def async_step_add_profile(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    # -- add ------------------------------------------------------------------------
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
             loc = self._resolve_location(user_input, str(user_input["device"]))
+            pid = slugify(user_input["name"])
             if not loc:
                 errors["base"] = "location_required"
             elif season_error := self._season_end_error(user_input):
                 errors.update(season_error)
+            elif pid in taken_names(self.hass):
+                errors["name"] = "name_exists"
             else:
-                profiles = self._profiles()
-                pid = slugify(user_input["name"])
-                if pid in self._taken_names():
-                    errors["name"] = "name_exists"
-                else:
-                    profiles[pid] = {**self._profile_fields(user_input, loc), "checkpoints": []}
-                    return self._save(profiles)
+                settings = {**self._profile_fields(user_input, loc), "checkpoints": []}
+                return self.async_create_entry(
+                    title=settings["name"],
+                    data={**settings, CONF_PROFILE_ID: pid},
+                    unique_id=pid,
+                )
         return self.async_show_form(
-            step_id="add_profile", errors=errors, data_schema=self._profile_schema()
+            step_id="user", errors=errors, data_schema=self._profile_schema()
         )
 
-    async def async_step_edit_profile(
+    # -- reconfigure ----------------------------------------------------------------
+    async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Pick the profile to change."""
-        if not self._profiles():
-            return self.async_abort(reason="no_profiles")
-        if user_input is not None:
-            self._editing = user_input["profile"]
-            return await self.async_step_edit_profile_details()
-        return self.async_show_form(
-            step_id="edit_profile",
-            data_schema=vol.Schema(
-                {
-                    vol.Required("profile"): selector.SelectSelector(
-                        selector.SelectSelectorConfig(options=self._profile_options())
-                    )
-                }
-            ),
+    ) -> SubentryFlowResult:
+        return self.async_show_menu(
+            step_id="reconfigure",
+            menu_options=["profile", "add_checkpoint", "remove_checkpoints"],
+            description_placeholders={"profile": self._get_reconfigure_subentry().title},
         )
 
-    async def async_step_edit_profile_details(
+    def _save(self, settings: dict[str, Any]) -> SubentryFlowResult:
+        sub = self._get_reconfigure_subentry()
+        return self.async_update_and_abort(
+            self._entry,
+            sub,
+            title=settings.get("name", sub.title),
+            data={**settings, CONF_PROFILE_ID: sub.data[CONF_PROFILE_ID]},
+        )
+
+    async def async_step_profile(
         self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    ) -> SubentryFlowResult:
         """Change a profile's name, bus, stop or schedule. Its id stays the same, so recorded
         trips, checkpoints, entities and scripts that use `profile: <id>` keep working."""
         errors: dict[str, str] = {}
-        profiles = self._profiles()
-        pid = self._editing
-        current = profiles[pid]
+        sub = self._get_reconfigure_subentry()
+        pid = sub.data[CONF_PROFILE_ID]
+        current = profile_settings(sub)
         if user_input is not None:
             loc = self._resolve_location(user_input, str(user_input["device"]))
             if not loc:
                 errors["base"] = "location_required"
-            elif slugify(user_input["name"]) in self._taken_names(except_id=pid):
+            elif slugify(user_input["name"]) in taken_names(self.hass, except_id=pid):
                 errors["name"] = "name_exists"
             elif season_error := self._season_end_error(user_input):
                 errors.update(season_error)
             else:
                 fields = self._profile_fields(user_input, loc)
                 fields["stop"] = {**(current.get("stop") or {}), **fields["stop"]}
-                profiles[pid] = {**current, **fields}
-                coord = getattr(self.config_entry, "runtime_data", None)
-                if user_input.get("relearn") and coord is not None:
-                    await coord.async_forget_trips(pid)
-                return self._save(profiles)
+                if user_input.get("relearn") and self._coord is not None:
+                    await self._coord.async_forget_trips(pid)
+                return self._save({**current, **fields})
         stop = current.get("stop") or {}
         suggested: dict[str, Any] = {
             "name": current.get("name", pid),
@@ -458,7 +448,7 @@ class BusMonitorOptionsFlow(OptionsFlow):
         if stop.get("expected_arrival"):
             suggested["expected_arrival"] = stop["expected_arrival"]
         return self.async_show_form(
-            step_id="edit_profile_details",
+            step_id="profile",
             errors=errors,
             data_schema=self.add_suggested_values_to_schema(
                 self._profile_schema(edit=True), user_input or suggested
@@ -468,13 +458,10 @@ class BusMonitorOptionsFlow(OptionsFlow):
 
     async def async_step_add_checkpoint(
         self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    ) -> SubentryFlowResult:
         errors: dict[str, str] = {}
-        profiles = self._profiles()
-        if not profiles:
-            return self.async_abort(reason="no_profiles")
+        profile = profile_settings(self._get_reconfigure_subentry())
         if user_input is not None:
-            profile = profiles[user_input["profile"]]
             loc = self._resolve_location(user_input, profile["device_id"])
             street = user_input.get("kind") == KIND_STREET
             label = (user_input.get("label") or "").strip()
@@ -504,15 +491,12 @@ class BusMonitorOptionsFlow(OptionsFlow):
                         "auto_place": bool(user_input.get("auto_place")) and not street,
                     },
                 ]
-                return self._save(profiles)
+                return self._save(profile)
         return self.async_show_form(
             step_id="add_checkpoint",
             errors=errors,
             data_schema=vol.Schema(
                 {
-                    vol.Required("profile"): selector.SelectSelector(
-                        selector.SelectSelectorConfig(options=self._profile_options())
-                    ),
                     vol.Required("kind", default=KIND_TIME): selector.SelectSelector(
                         selector.SelectSelectorConfig(
                             options=[
@@ -533,32 +517,24 @@ class BusMonitorOptionsFlow(OptionsFlow):
             ),
         )
 
-    async def async_step_remove(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        profiles = self._profiles()
-        if not profiles:
-            return self.async_abort(reason="no_profiles")
+    async def async_step_remove_checkpoints(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        profile = profile_settings(self._get_reconfigure_subentry())
+        if not profile["checkpoints"]:
+            return self.async_abort(reason="no_checkpoints")
         if user_input is not None:
-            pid = user_input["profile"]
-            if user_input["delete_profile"]:
-                profiles.pop(pid, None)
-            else:
-                drop = set(user_input.get("checkpoints", []))
-                profiles[pid]["checkpoints"] = [
-                    c for c in profiles[pid]["checkpoints"] if c["label"] not in drop
-                ]
-            return self._save(profiles)
-        labels = sorted({c["label"] for p in profiles.values() for c in p["checkpoints"]})
+            drop = set(user_input.get("checkpoints", []))
+            profile["checkpoints"] = [c for c in profile["checkpoints"] if c["label"] not in drop]
+            return self._save(profile)
+        labels = [c["label"] for c in profile["checkpoints"]]
         return self.async_show_form(
-            step_id="remove",
+            step_id="remove_checkpoints",
             data_schema=vol.Schema(
                 {
-                    vol.Required("profile"): selector.SelectSelector(
-                        selector.SelectSelectorConfig(options=self._profile_options())
-                    ),
                     vol.Optional("checkpoints", default=[]): selector.SelectSelector(
-                        selector.SelectSelectorConfig(options=labels, multiple=True, custom_value=True)
+                        selector.SelectSelectorConfig(options=labels, multiple=True)
                     ),
-                    vol.Required("delete_profile", default=False): bool,
                 }
             ),
         )

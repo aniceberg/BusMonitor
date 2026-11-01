@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 from typing import Any
 
 import voluptuous as vol
@@ -12,12 +11,13 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 
 from .calibration import suggest_checkpoints
-from .const import DOMAIN, OPT_PROFILES
+from .const import DOMAIN
 from .coordinator import MIN_AUTO_TRIPS
 from .geocoder import GeocodeError
 from .heatmap import route_heatmap
 from .locator import async_street_name
 from .models import KIND_STREET, KIND_TIME
+from .profiles import profile_subentries
 
 MAX_MINUTE_MARKS = 30
 
@@ -162,11 +162,11 @@ async def ws_set_checkpoints(
     if len(set(labels)) != len(labels):
         connection.send_error(msg["id"], "invalid_format", "Checkpoint names must be unique")
         return
-    profiles = copy.deepcopy(dict(entry.options.get(OPT_PROFILES) or {}))
-    profiles[msg["profile"]]["checkpoints"] = [
-        {**c, "label": c["label"].strip()} for c in msg["checkpoints"]
-    ]
-    hass.config_entries.async_update_entry(entry, options={**entry.options, OPT_PROFILES: profiles})
+    sub = profile_subentries(entry)[msg["profile"]]
+    checkpoints = [{**c, "label": c["label"].strip()} for c in msg["checkpoints"]]
+    hass.config_entries.async_update_subentry(
+        entry, sub, data={**sub.data, "checkpoints": checkpoints}
+    )
     connection.send_result(msg["id"], {"saved": len(labels)})
 
 

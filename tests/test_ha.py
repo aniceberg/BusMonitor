@@ -15,6 +15,7 @@ from pytest_homeassistant_custom_component.common import (
 
 from custom_components.bus_monitor.const import DOMAIN, EVENT_ALERT
 from custom_components.bus_monitor.models import Position
+from custom_components.bus_monitor.profiles import entry_profiles, profile_subentries
 from custom_components.bus_monitor.providers import CannotConnect, Device, InvalidAuth
 
 CONN = {"base_url": "http://gps.example:8082", "username": "u", "password": "p"}
@@ -81,6 +82,35 @@ async def _setup(hass, client):
     return entry
 
 
+def _profile(entry, pid="morning"):
+    return entry_profiles(entry)[pid]
+
+
+async def _open_profile(hass, entry, pid, step):
+    """Open a profile's ⋮ → Reconfigure and pick a menu item."""
+    sub = profile_subentries(entry)[pid]
+    result = await hass.config_entries.subentries.async_init(
+        (entry.entry_id, "bus_profile"),
+        context={"source": "reconfigure", "subentry_id": sub.subentry_id},
+    )
+    assert result["type"] is FlowResultType.MENU
+    return await hass.config_entries.subentries.async_configure(
+        result["flow_id"], {"next_step_id": step}
+    )
+
+
+async def _reconfigure(hass, entry, client, pid, step, user_input):
+    with patch("custom_components.bus_monitor.TraccarClient", return_value=client):
+        result = await _open_profile(hass, entry, pid, step)
+        result = await hass.config_entries.subentries.async_configure(result["flow_id"], user_input)
+        await hass.async_block_till_done()
+    return result
+
+
+def _saved(result) -> bool:
+    return result["type"] is FlowResultType.ABORT and result["reason"] == "reconfigure_successful"
+
+
 def _pos(lat, at):
     return Position("1", lat, -75.0, at, speed_mps=5, course=0.0)
 
@@ -91,7 +121,7 @@ async def test_setup_creates_entities_and_fires_alert(hass: HomeAssistant):
     entry = await _setup(hass, client)
 
     assert hass.states.get("device_tracker.bus_12") is not None
-    assert hass.states.get("sensor.bus_12_morning_status").state == "en_route"
+    assert hass.states.get("sensor.morning_status").state == "en_route"
 
     events = []
     hass.bus.async_listen(EVENT_ALERT, events.append)
@@ -100,7 +130,7 @@ async def test_setup_creates_entities_and_fires_alert(hass: HomeAssistant):
     await hass.async_block_till_done()
 
     assert [e.data["label"] for e in events] == ["5 min"]
-    assert hass.states.get("sensor.bus_12_morning_status").state == "near"
+    assert hass.states.get("sensor.morning_status").state == "near"
     assert entry.runtime_data.last_alert["morning"].minutes == 5
 
 
@@ -194,46 +224,30 @@ async def test_checkpoint_from_bus_position_keeps_map_radius(hass: HomeAssistant
     client = _client([_pos(39.9871, now)])
     entry = await _setup(hass, client)
 
-    with patch("custom_components.bus_monitor.TraccarClient", return_value=client):
-        result = await hass.config_entries.options.async_init(entry.entry_id)
-        result = await hass.config_entries.options.async_configure(
-            result["flow_id"], {"next_step_id": "add_checkpoint"}
-        )
-        result = await hass.config_entries.options.async_configure(
-            result["flow_id"],
-            {
-                "profile": "morning",
-                "label": "10 minutes away",
-                "minutes": 10,
-                "location": {"latitude": 1.0, "longitude": 2.0, "radius": 300},
-                "use_bus_position": True,
-                "announce": True,
-            },
-        )
-        await hass.async_block_till_done()
+    result = await _reconfigure(
+        hass, entry, client, "morning", "add_checkpoint",
+        {
+            "label": "10 minutes away",
+            "minutes": 10,
+            "location": {"latitude": 1.0, "longitude": 2.0, "radius": 300},
+            "use_bus_position": True,
+            "announce": True,
+        },
+    )
 
-    assert result["type"] is FlowResultType.CREATE_ENTRY
-    cp = entry.options["profiles"]["morning"]["checkpoints"][-1]
+    assert _saved(result)
+    cp = _profile(entry)["checkpoints"][-1]
     assert (cp["lat"], cp["lon"], cp["radius_m"]) == (39.9871, -75.0, 300)
     # The entry must have been saved and reloaded, so the running tracker sees it.
     tracker = entry.runtime_data.trackers["morning"]
     assert "10 minutes away" in [c.label for c in tracker.config.checkpoints]
-    assert hass.states.get("sensor.bus_12_morning_10_minutes_away_actual_minutes") is not None
+    assert hass.states.get("sensor.morning_10_minutes_away_actual_minutes") is not None
 
 
 async def test_remove_checkpoint_is_saved(hass: HomeAssistant):
     client = _client([_pos(39.98, datetime.now(UTC))])
     entry = await _setup(hass, client)
-    with patch("custom_components.bus_monitor.TraccarClient", return_value=client):
-        result = await hass.config_entries.options.async_init(entry.entry_id)
-        result = await hass.config_entries.options.async_configure(
-            result["flow_id"], {"next_step_id": "remove"}
-        )
-        await hass.config_entries.options.async_configure(
-            result["flow_id"],
-            {"profile": "morning", "checkpoints": ["5 min"], "delete_profile": False},
-        )
-        await hass.async_block_till_done()
+    await _reconfigure(hass, entry, client, "morning", "remove_checkpoints", {"checkpoints": ["5 min"]})
     assert entry.runtime_data.trackers["morning"].config.checkpoints == ()
 
 
@@ -243,7 +257,7 @@ async def test_reload_while_bus_at_stop_does_not_repeat_arrival(hass: HomeAssist
     events = []
     hass.bus.async_listen(EVENT_ALERT, events.append)
     entry = await _setup(hass, client)
-    assert hass.states.get("sensor.bus_12_morning_status").state == "arrived"
+    assert hass.states.get("sensor.morning_status").state == "arrived"
 
     client.positions.return_value = [Position("1", 40.0, -75.0, now + timedelta(seconds=10), speed_mps=0)]
     with patch("custom_components.bus_monitor.TraccarClient", return_value=client):
@@ -357,8 +371,8 @@ async def test_restart_after_arrival_does_not_announce_late(hass: HomeAssistant,
     async_fire_time_changed(hass, datetime.now(UTC) + timedelta(seconds=30))
     await hass.async_block_till_done()
     assert events == []
-    assert hass.states.get("binary_sensor.bus_12_morning_running_late").state == "off"
-    assert hass.states.get("sensor.bus_12_morning_status").state == "arrived"
+    assert hass.states.get("binary_sensor.morning_running_late").state == "off"
+    assert hass.states.get("sensor.morning_status").state == "arrived"
 
 
 async def test_measured_leads_need_three_trips(hass: HomeAssistant):
@@ -424,7 +438,7 @@ async def test_auto_placed_checkpoint_moves_to_typical_spot_without_reload(hass:
 
     cp = entry.runtime_data.trackers["morning"].config.checkpoints[0]
     assert abs(cp.lat - 39.990) < 0.0002 and abs(cp.lon + 75.0) < 1e-6  # moved onto the route, 5 min out
-    assert entry.options["profiles"]["morning"]["checkpoints"][0]["lat"] == 39.95  # user's setting untouched
+    assert _profile(entry)["checkpoints"][0]["lat"] == 39.95  # user's setting untouched
     assert entry.runtime_data.trackers["morning"].lead_minutes == {}  # auto/street: nominal leads
 
     ws = await hass_ws_client(hass)
@@ -445,7 +459,7 @@ async def test_set_checkpoints_round_trips_kind_and_auto_place(hass: HomeAssista
         await ws.send_json({"id": 1, "type": "bus_monitor/set_checkpoints", "profile": "morning", "checkpoints": new})
         assert (await ws.receive_json())["success"]
         await hass.async_block_till_done()
-    saved = entry.options["profiles"]["morning"]["checkpoints"]
+    saved = _profile(entry)["checkpoints"]
     assert [(c["kind"], c["auto_place"]) for c in saved] == [("time", True), ("street", False)]
     cfg = entry.runtime_data.trackers["morning"].config
     assert [c.kind for c in cfg.checkpoints] == ["time", "street"]
@@ -477,14 +491,8 @@ async def test_street_name_falls_back_to_nominatim_cross_street(hass: HomeAssist
 
 async def _edit(hass, entry, client, profile, changes):
     with patch("custom_components.bus_monitor.TraccarClient", return_value=client):
-        result = await hass.config_entries.options.async_init(entry.entry_id)
-        result = await hass.config_entries.options.async_configure(
-            result["flow_id"], {"next_step_id": "edit_profile"}
-        )
-        result = await hass.config_entries.options.async_configure(
-            result["flow_id"], {"profile": profile}
-        )
-        assert result["step_id"] == "edit_profile_details"
+        result = await _open_profile(hass, entry, profile, "profile")
+        assert result["step_id"] == "profile"
         current = {
             "name": "Morning",
             "device": "1",
@@ -495,7 +503,7 @@ async def _edit(hass, entry, client, profile, changes):
             "weekdays": ["0", "1", "2", "3", "4", "5", "6"],
             "offline_after_min": 0,
         }
-        result = await hass.config_entries.options.async_configure(
+        result = await hass.config_entries.subentries.async_configure(
             result["flow_id"], {**current, **changes}
         )
         await hass.async_block_till_done()
@@ -505,7 +513,7 @@ async def _edit(hass, entry, client, profile, changes):
 async def test_edit_profile_renames_and_keeps_id_checkpoints_and_entities(hass: HomeAssistant):
     client = _client([_pos(39.98, datetime.now(UTC))])
     entry = await _setup(hass, client)
-    status_id = "sensor.bus_12_morning_status"
+    status_id = "sensor.morning_status"
     assert hass.states.get(status_id) is not None
 
     result = await _edit(
@@ -513,8 +521,9 @@ async def test_edit_profile_renames_and_keeps_id_checkpoints_and_entities(hass: 
         {"name": "Daniel's ride", "active_start": "06:15:00", "weekdays": ["0", "2", "4"]},
     )
 
-    assert result["type"] is FlowResultType.CREATE_ENTRY
-    profile = entry.options["profiles"]["morning"]  # same id
+    assert _saved(result)
+    profile = _profile(entry)  # same id
+    assert profile_subentries(entry)["morning"].title == "Daniel's ride"
     assert profile["name"] == "Daniel's ride"
     assert (profile["active_start"], profile["weekdays"]) == ("06:15", [0, 2, 4])
     assert [c["label"] for c in profile["checkpoints"]] == ["5 min"]
@@ -538,7 +547,7 @@ async def test_edit_profile_rejects_another_profiles_name(hass: HomeAssistant):
 
     result = await _edit(hass, entry, client, "morning", {"name": "afternoon"})
     assert result["errors"] == {"name": "name_exists"}
-    assert entry.options["profiles"]["morning"]["name"] == "Morning"
+    assert _profile(entry)["name"] == "Morning"
 
 
 async def test_edit_profile_moves_the_stop(hass: HomeAssistant):
@@ -552,7 +561,7 @@ async def test_edit_profile_moves_the_stop(hass: HomeAssistant):
             "late_grace_min": 3,
         },
     )
-    stop = entry.options["profiles"]["morning"]["stop"]
+    stop = _profile(entry)["stop"]
     assert (stop["lat"], stop["lon"], stop["radius_m"]) == (40.01, -75.02, 120)
     assert (stop["expected_arrival"], stop["late_grace_min"]) == ("07:40", 3)
     cfg = entry.runtime_data.trackers["morning"].config
@@ -592,7 +601,7 @@ async def test_edit_sets_and_clears_announce_as(hass: HomeAssistant):
     client = _client([_pos(39.98, datetime.now(UTC))])
     entry = await _setup(hass, client)
     await _edit(hass, entry, client, "morning", {"announce_as": "  Daniel's bus "})
-    assert entry.options["profiles"]["morning"]["announce_as"] == "Daniel's bus"
+    assert _profile(entry)["announce_as"] == "Daniel's bus"
     assert entry.runtime_data.trackers["morning"].config.bus_name == "Daniel's bus"
 
     await _edit(hass, entry, client, "morning", {"announce_as": ""})
@@ -607,11 +616,10 @@ async def test_profile_name_must_be_unique_across_entries(hass: HomeAssistant):
     with patch("custom_components.bus_monitor.TraccarClient", return_value=client):
         await hass.config_entries.async_setup(other.entry_id)
         await hass.async_block_till_done()
-        result = await hass.config_entries.options.async_init(other.entry_id)
-        result = await hass.config_entries.options.async_configure(
-            result["flow_id"], {"next_step_id": "add_profile"}
+        result = await hass.config_entries.subentries.async_init(
+            (other.entry_id, "bus_profile"), context={"source": "user"}
         )
-        result = await hass.config_entries.options.async_configure(
+        result = await hass.config_entries.subentries.async_configure(
             result["flow_id"],
             {
                 "name": "morning",
@@ -634,11 +642,7 @@ async def test_edit_profile_can_switch_to_a_bus_not_picked_at_setup(hass: HomeAs
     assert hass.states.get("device_tracker.bus_34") is None  # only Bus 12 was picked
 
     with patch("custom_components.bus_monitor.TraccarClient", return_value=client):
-        result = await hass.config_entries.options.async_init(entry.entry_id)
-        result = await hass.config_entries.options.async_configure(
-            result["flow_id"], {"next_step_id": "edit_profile"}
-        )
-        result = await hass.config_entries.options.async_configure(result["flow_id"], {"profile": "morning"})
+        result = await _open_profile(hass, entry, "morning", "profile")
     options = result["data_schema"].schema["device"].config["options"]
     assert [(o["value"], o["label"]) for o in options] == [("1", "Bus 12"), ("2", "Bus 34")]
 
@@ -649,4 +653,98 @@ async def test_edit_profile_can_switch_to_a_bus_not_picked_at_setup(hass: HomeAs
     assert coord.trackers["morning"].config.device_id == "2" and "2" in coord.device_ids
     assert coord.trackers["morning"].config.bus_name == "Bus 34"
     assert hass.states.get("device_tracker.bus_34") is not None
-    assert hass.states.get("sensor.bus_12_morning_status") is not None  # entity ids are kept
+    assert hass.states.get("sensor.morning_status") is not None  # entity ids are kept
+
+
+# --- profiles as subentries ------------------------------------------------------------
+
+async def test_profiles_move_to_subentries_and_keep_their_entity_ids(hass: HomeAssistant):
+    """Upgrading from profiles in the options: each becomes a subentry; entity ids stay."""
+    from homeassistant.helpers import entity_registry as er
+
+    entry = MockConfigEntry(
+        domain=DOMAIN, version=2, minor_version=2, data=DATA,
+        options={"profiles": {"morning": {**PROFILE, "season_end": "2099-06-30"}}, "scan_interval": 20},
+    )
+    entry.add_to_hass(hass)
+    reg = er.async_get(hass)
+    old = reg.async_get_or_create(
+        "sensor", DOMAIN, f"{entry.entry_id}_morning_status",
+        config_entry=entry, suggested_object_id="bus_12_morning_status",
+    )
+    with patch("custom_components.bus_monitor.TraccarClient", return_value=_client([_pos(39.98, datetime.now(UTC))])):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert entry.minor_version == 3
+    assert entry.options == {"scan_interval": 20}
+    sub = profile_subentries(entry)["morning"]
+    assert (sub.title, sub.unique_id, sub.data["name"]) == ("Morning", "morning", "Morning")
+    moved = reg.async_get(old.entity_id)
+    assert moved.entity_id == "sensor.bus_12_morning_status" and moved.config_subentry_id == sub.subentry_id
+    assert hass.states.get("sensor.bus_12_morning_status") is not None
+
+
+async def test_add_bus_profile_creates_a_subentry(hass: HomeAssistant):
+    client = _client([_pos(39.98, datetime.now(UTC))])
+    entry = await _setup(hass, client)
+    with patch("custom_components.bus_monitor.TraccarClient", return_value=client):
+        result = await hass.config_entries.subentries.async_init(
+            (entry.entry_id, "bus_profile"), context={"source": "user"}
+        )
+        assert result["step_id"] == "user"
+        result = await hass.config_entries.subentries.async_configure(
+            result["flow_id"],
+            {
+                "name": "Afternoon",
+                "device": "1",
+                "location": {"latitude": 40.0, "longitude": -75.0, "radius": 75},
+                "late_grace_min": 5,
+                "active_start": "15:00:00",
+                "active_end": "16:30:00",
+                "weekdays": ["0", "1", "2", "3", "4"],
+                "offline_after_min": 0,
+            },
+        )
+        await hass.async_block_till_done()
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    sub = profile_subentries(entry)["afternoon"]
+    assert sub.title == "Afternoon" and sub.data["checkpoints"] == []
+    assert set(entry.runtime_data.trackers) == {"morning", "afternoon"}
+    assert hass.states.get("sensor.afternoon_status") is not None
+
+
+async def test_deleting_a_profile_removes_only_its_entities(hass: HomeAssistant):
+    from homeassistant.helpers import entity_registry as er
+
+    client = _client([_pos(39.98, datetime.now(UTC))])
+    entry = MockConfigEntry(
+        domain=DOMAIN, version=2, data=DATA,
+        options={"profiles": {"morning": PROFILE, "afternoon": {**PROFILE, "name": "Afternoon"}}},
+    )
+    entry.add_to_hass(hass)
+    with patch("custom_components.bus_monitor.TraccarClient", return_value=client):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        hass.config_entries.async_remove_subentry(entry, profile_subentries(entry)["afternoon"].subentry_id)
+        await hass.async_block_till_done()
+
+    reg = er.async_get(hass)
+    assert reg.async_get("sensor.afternoon_status") is None
+    assert reg.async_get("sensor.morning_status") is not None
+    assert reg.async_get("device_tracker.bus_12") is not None  # the bus stays
+    assert set(entry.runtime_data.trackers) == {"morning"}
+
+
+async def test_options_are_just_the_connection_settings(hass: HomeAssistant):
+    client = _client([_pos(39.98, datetime.now(UTC))])
+    entry = await _setup(hass, client)
+    with patch("custom_components.bus_monitor.TraccarClient", return_value=client):
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        assert result["type"] is FlowResultType.FORM and result["step_id"] == "init"
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"scan_interval": 20, "show_panel": False}
+        )
+        await hass.async_block_till_done()
+    assert entry.options == {"scan_interval": 20, "show_panel": False}
+    assert "morning" in profile_subentries(entry)  # untouched

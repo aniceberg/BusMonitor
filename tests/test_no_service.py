@@ -15,6 +15,7 @@ from custom_components.bus_monitor.calibration import TrailRecorder
 from custom_components.bus_monitor.const import DOMAIN
 from custom_components.bus_monitor.coordinator import IDLE_SCAN_INTERVAL
 from custom_components.bus_monitor.models import Position, StopConfig, default_season_end
+from custom_components.bus_monitor.profiles import entry_profiles
 
 from .conftest import MONDAY_7AM, STOP_LAT, STOP_LON, make_config, pos
 from .test_ha import DATA, PROFILE, _client, _edit, _line_trip
@@ -178,7 +179,7 @@ async def test_school_year_over_pauses_and_raises_a_repair(hass: HomeAssistant):
     client = _client([Position("1", 39.95, -75.0, datetime.now(UTC))])
     entry = await _setup(hass, client, {"morning": {**PROFILE, "season_end": "2020-06-30"}})
     issue_id = f"season_over_{entry.entry_id}_morning"
-    assert hass.states.get("sensor.bus_12_morning_status").state == "season_over"
+    assert hass.states.get("sensor.morning_status").state == "season_over"
     assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None
     for _ in range(3):
         await _tick(hass, 30)
@@ -191,11 +192,11 @@ async def test_school_year_over_pauses_and_raises_a_repair(hass: HomeAssistant):
     # the next school year: watching again, the notice is gone
     end = default_season_end(datetime.now().date()).isoformat()
     result = await _edit(hass, entry, client, "morning", {"season_end": end})
-    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["type"] is FlowResultType.ABORT
     await hass.async_block_till_done()
-    assert entry.options["profiles"]["morning"]["season_end"] == end
+    assert entry_profiles(entry)["morning"]["season_end"] == end
     assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
-    assert hass.states.get("sensor.bus_12_morning_status").state != "season_over"
+    assert hass.states.get("sensor.morning_status").state != "season_over"
 
 
 async def test_profiles_get_a_school_year_end_on_upgrade(hass: HomeAssistant):
@@ -205,9 +206,9 @@ async def test_profiles_get_a_school_year_end_on_upgrade(hass: HomeAssistant):
     with patch("custom_components.bus_monitor.TraccarClient", return_value=client):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
-    assert entry.minor_version == 2
+    assert entry.minor_version == 3
     expected = default_season_end(datetime.now().date()).isoformat()
-    assert entry.options["profiles"]["morning"] == {**PROFILE, "season_end": expected}
+    assert entry_profiles(entry)["morning"] == {**PROFILE, "season_end": expected}
 
 
 async def test_relearn_forgets_the_profiles_trips(hass: HomeAssistant, hass_storage):
@@ -225,4 +226,4 @@ async def test_relearn_forgets_the_profiles_trips(hass: HomeAssistant, hass_stor
     await hass.async_block_till_done()
     rec = entry.runtime_data.recorder
     assert rec.trips_for("morning") == [] and len(rec.trips_for("afternoon")) == 1
-    assert "relearn" not in entry.options["profiles"]["morning"]
+    assert "relearn" not in entry_profiles(entry)["morning"]

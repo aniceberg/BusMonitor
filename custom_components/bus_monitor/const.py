@@ -12,7 +12,11 @@ PROVIDER_TRACCAR = "traccar"
 PROVIDER_BOUNCIE = "bouncie"
 
 # options
-OPT_PROFILES = "profiles"  # {profile_id: {device_id, name, stop, checkpoints, ...}}
+OPT_PROFILES = "profiles"  # before 2.3: {profile_id: {...}} in the entry options
+# Since 2.3 each bus profile is a config subentry of its provider entry; its data holds
+# the profile settings plus "profile_id" (also the subentry's unique_id).
+SUBENTRY_PROFILE = "bus_profile"
+CONF_PROFILE_ID = "profile_id"
 OPT_SCAN_INTERVAL = "scan_interval"
 OPT_SHOW_PANEL = "show_panel"  # Bus Monitor map in the sidebar (default on)
 

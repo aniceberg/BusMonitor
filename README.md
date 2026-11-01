@@ -35,9 +35,14 @@ Bouncie login). Each bus profile follows one vehicle from its entry.
 3. Choose **Traccar GPS server** and enter the server URL and shared login, or choose
    **Bouncie** and sign in (one-time app setup: [docs/bouncie.md](docs/bouncie.md)). Then
    choose the bus(es).
-4. Configure -> **Add a bus profile**, then **Add an alert checkpoint** (repeat per alert).
-   Use **Edit a bus profile** later to rename it or change its bus, stop or schedule; its
-   checkpoints, recorded trips and entity IDs are kept. The bus list shows every vehicle the
+4. On the Bus Monitor integration page, choose **Add bus profile** under the Traccar server or
+   Bouncie account. Each profile is listed there with its own device and entities. To change
+   one, open its ⋮ menu → **Reconfigure**:
+   - **Edit the profile**: rename it, or change its bus, stop, schedule or school year. Its
+     checkpoints, recorded trips and entity IDs are kept.
+   - **Add an alert checkpoint** (repeat per alert), or **Remove checkpoints**.
+
+   Delete a profile from the same ⋮ menu. The bus list shows every vehicle the
    Traccar login or Bouncie account can see, not only the ones picked at setup, so a new bus
    number next school year is just an edit (no need to remove and re-add the integration).
    *Announce as* (optional) sets what alerts and "where is the bus?" call the bus, e.g.
@@ -67,7 +72,7 @@ checkpoint but reaches the next isn't treated as late.
 Shadow crossings fire `bus_monitor_shadow` instead.
 
 ## Map panel
-Bus Monitor adds a **Bus Monitor** page to the sidebar (turn it off under Configure → Settings).
+Bus Monitor adds a **Bus Monitor** page to the sidebar (turn it off under the provider's Configure).
 For each bus profile it shows:
 - your stop, the bus's live position, the latest recorded trip and today's trip so far;
 - the **checkpoints**, in two types:
@@ -104,13 +109,15 @@ up to date:
   moved that day.
 - **The school year ends.** Each profile has a *School year ends* date (the coming June 30 by
   default). After it the profile pauses: no polling, no alerts, status `season_over`, and a
-  notice under Settings → Repairs. Before school starts, use **Edit a bus profile** to check
+  notice under Settings → Repairs. Before school starts, open the profile's ⋮ → **Reconfigure** → **Edit the profile** to check
   the times and stop (they often change), pick the new bus if it changed, and set the new end date. Tick *Forget recorded
   trips and relearn the route* if the route changed. Trips are kept for 60 days anyway, so
   last June's trips never place September's checkpoints.
 
 ## Entities
-Per bus: `device_tracker` (live location). Per profile: status (`idle`, `en_route`, `near`,
+Per bus: a device with a `device_tracker` (live location). Per profile: its own device (linked to
+its bus; profiles added from v0.7.0 get entity IDs like `sensor.morning_status`, while older ones
+keep theirs) with status (`idle`, `en_route`, `near`,
 `arrived`, `not_running`, `season_over`), last alert,
 distance to stop, running-late, and per-checkpoint "actual minutes" (median of real trips,
 with p10/p90/count as attributes).

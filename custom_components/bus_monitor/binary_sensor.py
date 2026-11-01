@@ -14,13 +14,16 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: BusMonitorConfigEntry, async_add_entities: AddConfigEntryEntitiesCallback
 ) -> None:
     coordinator = entry.runtime_data
-    async_add_entities(LateSensor(coordinator, t) for t in coordinator.trackers.values())
+    for pid, tracker in coordinator.trackers.items():
+        async_add_entities(
+            [LateSensor(coordinator, tracker)], config_subentry_id=coordinator.subentry_ids[pid]
+        )
 
 
 class LateSensor(ProfileEntity, BinarySensorEntity):
     def __init__(self, coordinator, tracker) -> None:
         super().__init__(coordinator, tracker, "late")
-        self._attr_name = f"{tracker.config.name} running late"
+        self._attr_name = "Running late"
 
     @property
     def is_on(self) -> bool:
