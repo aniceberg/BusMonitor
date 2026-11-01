@@ -19,7 +19,9 @@ Bouncie login). Each bus profile follows one vehicle from its entry.
 - Per bus *profile* (e.g. "Morning", "Afternoon"): a stop, a watch window,
   and any number of **checkpoints** ("about 10 / 5 / 2 minutes away").
 - Polls the provider only while a profile is watching: inside its watch window, until the bus
-  reaches the stop. "Where is the bus?" still works any time (it fetches once on demand).
+  reaches the stop. Until the bus moves that day it polls once a minute, and it gives up on
+  days the bus never comes (see [Holidays and summer](#holidays-and-summer)). "Where is the
+  bus?" still works any time (it fetches once on demand).
 - Fires a `bus_monitor_alert` event for each checkpoint, arrival, running-late
   and (optional) no-GPS-fix. Use any automation to announce it on Google Home.
 - **Baseline recorder**: every completed trip's trail and checkpoint timings are
@@ -35,7 +37,9 @@ Bouncie login). Each bus profile follows one vehicle from its entry.
    choose the bus(es).
 4. Configure -> **Add a bus profile**, then **Add an alert checkpoint** (repeat per alert).
    Use **Edit a bus profile** later to rename it or change its bus, stop or schedule; its
-   checkpoints, recorded trips and entity IDs are kept.
+   checkpoints, recorded trips and entity IDs are kept. The bus list shows every vehicle the
+   Traccar login or Bouncie account can see, not only the ones picked at setup, so a new bus
+   number next school year is just an edit (no need to remove and re-add the integration).
    *Announce as* (optional) sets what alerts and "where is the bus?" call the bus, e.g.
    "Daniel's bus"; otherwise the vehicle's name is used ("Bus" is added before a route number
    such as "12").
@@ -86,8 +90,28 @@ Trips are recorded while the bus is inside the profile's watch window, so start 
 enough to cover the whole route if you want the heatmap to show all of it.
 Map data © OpenStreetMap contributors.
 
+## Holidays and summer
+Neither Traccar nor Bouncie knows about routes or school days, only where the vehicle is, so
+Bus Monitor watches for the bus itself to show it's running. There's no holiday calendar to keep
+up to date:
+- **Until the bus moves**, it polls once a minute instead of at the normal rate. "Moving" means a
+  fix from today's window showing the bus faster than 2 m/s, or more than 200 m from where it was
+  parked.
+- **If it never moves** by the normal arrival time plus the "minutes behind schedule"
+  tolerance, today counts as a no-bus day (a holiday or snow day). Polling stops and the status
+  sensor shows `not_running`. Without a normal arrival time it watches until the window ends.
+- **No false alarms.** "Running late" and "no GPS fix" are only announced once the bus has
+  moved that day.
+- **The school year ends.** Each profile has a *School year ends* date (the coming June 30 by
+  default). After it the profile pauses: no polling, no alerts, status `season_over`, and a
+  notice under Settings → Repairs. Before school starts, use **Edit a bus profile** to check
+  the times and stop (they often change), pick the new bus if it changed, and set the new end date. Tick *Forget recorded
+  trips and relearn the route* if the route changed. Trips are kept for 60 days anyway, so
+  last June's trips never place September's checkpoints.
+
 ## Entities
-Per bus: `device_tracker` (live location). Per profile: status, last alert,
+Per bus: `device_tracker` (live location). Per profile: status (`idle`, `en_route`, `near`,
+`arrived`, `not_running`, `season_over`), last alert,
 distance to stop, running-late, and per-checkpoint "actual minutes" (median of real trips,
 with p10/p90/count as attributes).
 
@@ -117,4 +141,4 @@ HACS and the Home Assistant UI. Regenerate them with `.venv/bin/python scripts/m
 
 ## Roadmap
 - WebSocket push (`/api/socket`) instead of polling; blueprint automation.
-- Bouncie `tripData` webhooks for live positions (needs Home Assistant reachable over HTTPS).
+- Bouncie `tripData` webhooks: not needed so far, since polling returned a new position every 15 s on real trips (see docs/bouncie.md).

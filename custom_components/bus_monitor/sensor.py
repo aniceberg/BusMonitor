@@ -8,9 +8,17 @@ from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, Sen
 from homeassistant.const import UnitOfLength, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.util import dt as dt_util
 
 from . import BusMonitorConfigEntry
-from .alerts import STATUS_ARRIVED, STATUS_EN_ROUTE, STATUS_IDLE, STATUS_NEAR
+from .alerts import (
+    STATUS_ARRIVED,
+    STATUS_EN_ROUTE,
+    STATUS_IDLE,
+    STATUS_NEAR,
+    STATUS_NOT_RUNNING,
+    STATUS_SEASON_OVER,
+)
 from .calibration import checkpoint_stats
 from .entity import ProfileEntity
 from .geo import haversine_m
@@ -34,7 +42,14 @@ async def async_setup_entry(
 
 class StatusSensor(ProfileEntity, SensorEntity):
     _attr_device_class = SensorDeviceClass.ENUM
-    _attr_options = [STATUS_IDLE, STATUS_EN_ROUTE, STATUS_NEAR, STATUS_ARRIVED]
+    _attr_options = [
+        STATUS_IDLE,
+        STATUS_EN_ROUTE,
+        STATUS_NEAR,
+        STATUS_ARRIVED,
+        STATUS_NOT_RUNNING,
+        STATUS_SEASON_OVER,
+    ]
 
     def __init__(self, coordinator, tracker) -> None:
         super().__init__(coordinator, tracker, "status")
@@ -42,7 +57,7 @@ class StatusSensor(ProfileEntity, SensorEntity):
 
     @property
     def native_value(self) -> str:
-        return self._tracker.status
+        return self._tracker.display_status(dt_util.now())
 
 
 class LastAlertSensor(ProfileEntity, SensorEntity):

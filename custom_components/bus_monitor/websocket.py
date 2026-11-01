@@ -9,6 +9,7 @@ import voluptuous as vol
 from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
+from homeassistant.util import dt as dt_util
 
 from .calibration import suggest_checkpoints
 from .const import DOMAIN, OPT_PROFILES
@@ -87,7 +88,7 @@ def ws_overview(hass: HomeAssistant, connection: websocket_api.ActiveConnection,
                         cfg.active_start.isoformat(timespec="minutes"),
                         cfg.active_end.isoformat(timespec="minutes"),
                     ],
-                    "status": tracker.status,
+                    "status": tracker.display_status(dt_util.now()),
                     "trips": len(coord.recorder.trips_for(pid)),
                     "position": {
                         "lat": pos.lat,

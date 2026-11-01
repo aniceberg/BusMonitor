@@ -76,7 +76,7 @@ async def async_describe(
         "longitude": pos.lon,
         "distance_to_stop_m": round(distance) if distance is not None else None,
         "eta_minutes": eta,
-        "status": tracker.status,
+        "status": tracker.display_status(now),
     }
 
 

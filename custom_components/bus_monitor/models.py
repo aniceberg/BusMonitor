@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, time
+from datetime import date, datetime, time
 from typing import Any
 
 from .geo import KNOTS_TO_MPS, MPH_TO_MPS
@@ -161,6 +161,7 @@ class BusConfig:
     weekdays: tuple[int, ...] = (0, 1, 2, 3, 4)  # Monday=0
     offline_after_min: int = 0  # 0 disables the "no GPS fix" alert
     bus_name: str = ""  # spoken name of the bus, e.g. "Bus 12" (set from the tracked vehicle)
+    season_end: date | None = None  # last school day; the profile pauses after it
 
     @classmethod
     def from_dict(cls, profile_id: str, data: dict[str, Any]) -> BusConfig:
@@ -176,7 +177,14 @@ class BusConfig:
             weekdays=tuple(data.get("weekdays", (0, 1, 2, 3, 4))),
             offline_after_min=int(data.get("offline_after_min", 0)),
             bus_name=str(data.get("announce_as") or "").strip(),
+            season_end=date.fromisoformat(data["season_end"]) if data.get("season_end") else None,
         )
+
+
+def default_season_end(today: date) -> date:
+    """The coming June 30: the end of the current school year."""
+    end = date(today.year, 6, 30)
+    return end if today <= end else date(today.year + 1, 6, 30)
 
 
 @dataclass(frozen=True)

@@ -70,6 +70,11 @@ class TrailRecorder:
     def discard(self, profile_id: str) -> None:
         self._current.pop(profile_id, None)
 
+    def forget(self, profile_id: str) -> None:
+        """Drop every recorded trip of a profile (its route changed): relearn from scratch."""
+        self.discard(profile_id)
+        self.trips = [t for t in self.trips if t.profile_id != profile_id]
+
     def finish(
         self,
         profile_id: str,
@@ -105,10 +110,17 @@ class TrailRecorder:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None, now: datetime | None = None) -> TrailRecorder:
-        """Load saved trips; in-progress trails are kept only if recent (same trip)."""
+        """Load saved trips; in-progress trails are kept only if recent (same trip).
+
+        Trips past the retention period are dropped here too, not only when the next trip
+        finishes, so last June's trips don't place September's checkpoints.
+        """
         rec = cls()
         if data:
             rec.trips = [TripRecord.from_dict(t) for t in data.get("trips", [])]
+            if now is not None:
+                cutoff = (now - timedelta(days=RETENTION_DAYS)).date().isoformat()
+                rec.trips = [t for t in rec.trips if t.date >= cutoff]
             for pid, raw in (data.get("current") or {}).items():
                 trail = [(datetime.fromisoformat(t), la, lo, s) for t, la, lo, s in raw]
                 if trail and now is not None and now - trail[-1][0] < CURRENT_TRAIL_MAX_AGE:

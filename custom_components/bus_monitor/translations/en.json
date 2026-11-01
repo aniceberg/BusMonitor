@@ -83,10 +83,13 @@
           "active_start": "Watch from",
           "active_end": "Watch until",
           "weekdays": "Days",
-          "offline_after_min": "Alert if no GPS fix for N minutes (0 = off)"
+          "offline_after_min": "Alert if no GPS fix for N minutes (0 = off)",
+          "season_end": "School year ends"
         },
         "data_description": {
-          "announce_as": "What alerts and \"where is the bus?\" call this bus, e.g. \"Daniel's bus\". Leave empty to use the vehicle's name."
+          "announce_as": "What alerts and \"where is the bus?\" call this bus, e.g. \"Daniel's bus\". Leave empty to use the vehicle's name.",
+          "season_end": "Last school day. The profile pauses after it (no polling, no alerts) until you edit it and set the next school year's end.",
+          "device": "Any vehicle this account can see, including ones not picked when the integration was added (e.g. a new bus for the school year)."
         }
       },
       "edit_profile": {
@@ -97,7 +100,7 @@
       },
       "edit_profile_details": {
         "title": "Edit a bus profile",
-        "description": "Change the name, bus, stop or schedule. Checkpoints, recorded trips and entity IDs are kept, and scripts keep working with profile: {profile_id}.",
+        "description": "Change the name, bus, stop or schedule. Checkpoints, recorded trips and entity IDs are kept, and scripts keep working with profile: {profile_id}. After the summer pause, check the times and the stop and set when this school year ends.",
         "data": {
           "name": "Profile name",
           "announce_as": "Announce as (optional)",
@@ -109,10 +112,15 @@
           "active_start": "Watch from",
           "active_end": "Watch until",
           "weekdays": "Days",
-          "offline_after_min": "Alert if no GPS fix for N minutes (0 = off)"
+          "offline_after_min": "Alert if no GPS fix for N minutes (0 = off)",
+          "season_end": "School year ends",
+          "relearn": "Forget recorded trips and relearn the route"
         },
         "data_description": {
-          "announce_as": "What alerts and \"where is the bus?\" call this bus, e.g. \"Daniel's bus\". Leave empty to use the vehicle's name."
+          "announce_as": "What alerts and \"where is the bus?\" call this bus, e.g. \"Daniel's bus\". Leave empty to use the vehicle's name.",
+          "season_end": "Last school day. The profile pauses after it (no polling, no alerts) until you edit it and set the next school year's end.",
+          "relearn": "Tick if the route changed. Auto-placed checkpoints and measured timings start over; your own checkpoints stay where they are.",
+          "device": "Any vehicle this account can see, including ones not picked when the integration was added (e.g. a new bus for the school year)."
         }
       },
       "add_checkpoint": {
@@ -148,7 +156,8 @@
     "error": {
       "location_required": "Pick a location, or tick 'use bus position'.",
       "name_exists": "That name is already used by another bus profile.",
-      "street_lookup_failed": "Couldn't look up the street name. Type a name, or try again in a minute."
+      "street_lookup_failed": "Couldn't look up the street name. Type a name, or try again in a minute.",
+      "season_end_past": "That date has already passed. Pick the last day of this school year."
     },
     "abort": {
       "no_profiles": "Add a bus profile first."
@@ -200,5 +209,11 @@
   },
   "application_credentials": {
     "description": "Register an app at {developer_portal_url}, add the redirect URI {redirect_url}, then paste its Client ID and Client Secret here."
+  },
+  "issues": {
+    "season_over": {
+      "title": "{profile} is paused for the summer",
+      "description": "The school year set for {profile} has ended, so Bus Monitor stopped watching for the bus. Before school starts, open Bus Monitor → Configure → Edit a bus profile, check the times and the stop, set when the new school year ends and save. Tick \"relearn the route\" if the route changed."
+    }
   }
 }

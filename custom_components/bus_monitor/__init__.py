@@ -16,6 +16,7 @@ from homeassistant.helpers import config_entry_oauth2_flow
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_create_clientsession, async_get_clientsession
 from homeassistant.helpers.storage import Store
+from homeassistant.util import dt as dt_util
 
 from .calibration import checkpoint_stats, suggest_checkpoints
 from .const import (
@@ -37,6 +38,7 @@ from .const import (
 from .coordinator import BusMonitorCoordinator
 from .geocoder import OverpassGeocoder
 from .locator import async_describe
+from .models import default_season_end
 from .panel import async_setup_frontend, async_update_panel
 from .providers import CannotConnect, InvalidAuth, Provider
 from .providers.bouncie import BouncieClient
@@ -82,7 +84,8 @@ async def _async_provider(hass: HomeAssistant, entry: BusMonitorConfigEntry) -> 
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """v1 (Traccar only, int device ids) -> v2 (provider key, str device ids)."""
+    """v1 (Traccar only, int device ids) -> v2 (provider key, str device ids);
+    2.1 -> 2.2 (every profile gets a school-year end, so it pauses for the summer)."""
     if entry.version > 2:
         return False
     if entry.version == 1:
@@ -96,7 +99,17 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             for pid, p in (entry.options.get(OPT_PROFILES) or {}).items()
         }
         options = {**entry.options, OPT_PROFILES: profiles} if profiles else dict(entry.options)
-        hass.config_entries.async_update_entry(entry, data=data, options=options, version=2)
+        hass.config_entries.async_update_entry(
+            entry, data=data, options=options, version=2, minor_version=1
+        )
+    if entry.minor_version < 2:
+        end = default_season_end(dt_util.now().date()).isoformat()
+        profiles = {
+            pid: {**p, "season_end": p.get("season_end") or end}
+            for pid, p in (entry.options.get(OPT_PROFILES) or {}).items()
+        }
+        options = {**entry.options, OPT_PROFILES: profiles} if profiles else dict(entry.options)
+        hass.config_entries.async_update_entry(entry, options=options, minor_version=2)
     return True
 
 
@@ -110,7 +123,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: BusMonitorConfigEntry) -
     except CannotConnect as err:
         raise ConfigEntryNotReady(str(err)) from err
 
+    # The buses picked at setup, plus any other vehicle on the account that a profile was
+    # switched to later (e.g. the school assigned a new bus for the school year).
     device_ids = [str(i) for i in entry.data[CONF_DEVICES]]
+    for profile in (entry.options.get(OPT_PROFILES) or {}).values():
+        if (device_id := str(profile["device_id"])) not in device_ids:
+            device_ids.append(device_id)
     coordinator = BusMonitorCoordinator(hass, entry, client, device_ids, devices)
     coordinator.geocoder = await _async_geocoder(hass)
     await coordinator.async_load()
