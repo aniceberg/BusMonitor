@@ -105,7 +105,9 @@ class BusMonitorPanel extends HTMLElement {
     this.shadowRoot.innerHTML = `
       <link rel="stylesheet" href="${BASE}leaflet/leaflet.css">
       <style>
-        :host { display: flex; flex-direction: column; height: 100%; background: var(--primary-background-color);
+        /* Viewport height, not 100%: HA's panel wrapper has no fixed height, so the checkpoint
+           list would stretch the map off-screen instead of scrolling in its own column. */
+        :host { display: flex; flex-direction: column; height: 100vh; height: 100dvh; background: var(--primary-background-color);
                 color: var(--primary-text-color); font-family: var(--paper-font-body1_-_font-family, Roboto, sans-serif); }
         .toolbar { display: flex; align-items: center; gap: 12px; height: var(--header-height, 56px); padding: 0 12px;
                    background: var(--app-header-background-color, var(--primary-color)); color: var(--app-header-text-color, #fff);
@@ -123,6 +125,7 @@ class BusMonitorPanel extends HTMLElement {
         #map { position: absolute !important; inset: 0; }
         .side { width: 360px; flex: none; overflow-y: auto; padding: 12px; box-sizing: border-box;
                 background: var(--card-background-color); border-left: 1px solid var(--divider-color); }
+        :host([narrow]) { height: auto; min-height: 100vh; }
         :host([narrow]) .body { flex-direction: column; }
         :host([narrow]) .map { flex: none; height: 55vh; }
         :host([narrow]) .side { width: auto; border-left: none; border-top: 1px solid var(--divider-color); }
@@ -192,7 +195,11 @@ class BusMonitorPanel extends HTMLElement {
     this.shadowRoot.getElementById("profile").addEventListener("change", (e) => this._select(e.target.value));
 
     if (this._hass?.themes?.darkMode) this.shadowRoot.getElementById("mapwrap").classList.add("dark");
-    this._map = L.map(this.shadowRoot.getElementById("map"), { zoomControl: true }).setView([40.65, -73.95], 13);
+    this._map = L.map(this.shadowRoot.getElementById("map"), { zoomControl: true, zoomSnap: 0.25 }).setView([40.65, -73.95], 13);
+    // Until the user moves the map, keep the route fitted if the panel changes size.
+    for (const type of ["pointerdown", "wheel"]) {
+      this.shadowRoot.getElementById("map").addEventListener(type, () => (this._userMoved = true), { passive: true });
+    }
     // Standard OpenStreetMap tiles (fine for light personal use, attribution required).
     L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 19,
@@ -210,7 +217,7 @@ class BusMonitorPanel extends HTMLElement {
     this._map.on("zoomend", () => this._drawMinuteMarks());
     new ResizeObserver(() => {
       this._map.invalidateSize();
-      if (this._pendingFit && this._mapHasSize()) this._fit();
+      if ((this._pendingFit || !this._userMoved) && this._mapHasSize()) this._fit();
     }).observe(this.shadowRoot.getElementById("mapwrap"));
   }
 
@@ -263,6 +270,7 @@ class BusMonitorPanel extends HTMLElement {
       return;
     }
     this._sel = id;
+    this._userMoved = false;
     this._dirty = false;
     this._selIdx = null;
     this._draft = this._profile().checkpoints.map((c) => ({ ...c }));
@@ -289,20 +297,36 @@ class BusMonitorPanel extends HTMLElement {
   }
 
   _fit() {
+    if (!this._profile()) return; // resize can fire before the first data arrives
     // Fitting a map that has no size yet zooms to nonsense; do it once it's laid out.
     if (!this._mapHasSize()) {
       this._pendingFit = true;
       return;
     }
     this._pendingFit = false;
+    const pts = this._routePoints();
+    // Pixel padding keeps markers on the edge fully visible without shrinking a long route.
+    if (pts.length > 1) this._map.fitBounds(L.latLngBounds(pts), { padding: [32, 32], maxZoom: 17 });
+    else if (pts.length) this._map.setView(pts[0], 16);
+  }
+
+  // What the first view should show: the monitored route (usual route plus today's trip),
+  // stop and checkpoints. The live bus only counts until a trip is recorded, or a bus parked
+  // at the depot would stretch the view; rare heatmap detours are left out for the same reason.
+  _routePoints() {
     const p = this._profile();
+    const r = this._route;
     const pts = [];
     if (p.stop) pts.push([p.stop.lat, p.stop.lon]);
     this._draft.forEach((c) => pts.push([c.lat, c.lon]));
-    (this._route?.latest?.path || []).forEach((q) => pts.push(q));
-    if (p.position) pts.push([p.position.lat, p.position.lon]);
-    if (pts.length > 1) this._map.fitBounds(L.latLngBounds(pts).pad(0.1), { maxZoom: 17 });
-    else if (pts.length) this._map.setView(pts[0], 16);
+    const recorded = r?.latest?.path || [];
+    pts.push(...recorded);
+    for (const [lat, lon, frac] of r?.heatmap?.cells || []) {
+      if (frac >= 0.5) pts.push([lat, lon]);
+    }
+    pts.push(...(r?.today || []));
+    if (!recorded.length && p.position) pts.push([p.position.lat, p.position.lon]);
+    return pts;
   }
 
   _drawStop(p) {
