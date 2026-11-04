@@ -18,6 +18,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: uv venv --python 3.14 && uv pip install pytest-homeassistant-custom-component home-assistant-frontend hassil home-assistant-intents ruff
+      - run: uv venv --python 3.14 && uv pip install pytest-homeassistant-custom-component home-assistant-frontend ruff
+      # The Assist example needs the conversation integration's exact requirements.
+      - run: |
+          .venv/bin/python -c "import json, pathlib, homeassistant; print('\n'.join(json.loads((pathlib.Path(homeassistant.__file__).parent / 'components/conversation/manifest.json').read_text())['requirements']))" > conversation-requirements.txt
+          uv pip install -r conversation-requirements.txt
       - run: .venv/bin/ruff check .
       - run: .venv/bin/python -m pytest -q
