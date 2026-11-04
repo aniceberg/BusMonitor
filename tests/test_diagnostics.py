@@ -26,10 +26,10 @@ PROFILE = {
     "device_id": "9001",
     "name": "Secret profile name",
     "announce_as": "Secret spoken name",
-    "stop": {"lat": 41.23456, "lon": -73.65432, "radius_m": 75, "expected_arrival": "07:40", "late_grace_min": 5},
+    "stop": {"lat": 11.23456, "lon": -22.65432, "radius_m": 75, "expected_arrival": "07:40", "late_grace_min": 5},
     "checkpoints": [
-        {"label": "Secret Street", "kind": "street", "minutes": 0, "lat": 41.11111, "lon": -73.22222, "radius_m": 60, "announce": True},
-        {"label": "10 min", "kind": "time", "minutes": 10, "auto_place": True, "lat": 41.33333, "lon": -73.44444, "radius_m": 100, "announce": False},
+        {"label": "Secret Street", "kind": "street", "minutes": 0, "lat": 11.11111, "lon": -22.22222, "radius_m": 60, "announce": True},
+        {"label": "10 min", "kind": "time", "minutes": 10, "auto_place": True, "lat": 11.33333, "lon": -22.44444, "radius_m": 100, "announce": False},
     ],
     "active_start": "00:00",
     "active_end": "23:59",
@@ -39,14 +39,14 @@ FORBIDDEN = [
     "secret",
     "9001",
     "morning_run",
-    "41.2",
-    "73.6",
-    "41.1",
-    "73.2",
-    "41.3",
-    "73.4",
-    "41.5",
-    "73.7",
+    "11.2",
+    "22.6",
+    "11.1",
+    "22.2",
+    "11.3",
+    "22.4",
+    "11.5",
+    "22.7",
 ]
 
 
@@ -69,7 +69,7 @@ def _assert_clean(diag: dict) -> None:
 
 async def test_diagnostics_of_a_running_entry(hass: HomeAssistant):
     now = datetime.now(UTC)
-    client = _client([Position("9001", 41.55555, -73.77777, now - timedelta(seconds=30), speed_mps=5, course=0.0)])
+    client = _client([Position("9001", 11.55555, -22.77777, now - timedelta(seconds=30), speed_mps=5, course=0.0)])
     from custom_components.bus_monitor.providers import Device
 
     client.devices.return_value = [Device("9001", "Secret bus name", "secret-unique-id")]
