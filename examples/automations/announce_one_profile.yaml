@@ -1,0 +1,22 @@
+# Automation: speak alerts for one bus profile only, and skip "running late".
+# Paste as in announce_all_alerts.yaml.
+# Change: profile (the id shown in the profile's Reconfigure screen), entity_id,
+# media_player_entity_id.
+alias: Morning bus alerts on speakers
+description: Speaks checkpoint and arrival alerts for one profile.
+mode: queued
+triggers:
+  - trigger: event
+    event_type: bus_monitor_alert
+    event_data:
+      profile: morning
+conditions:
+  - condition: template
+    value_template: "{{ trigger.event.data.kind in ['checkpoint', 'arrived'] }}"
+actions:
+  - action: tts.speak
+    target:
+      entity_id: tts.google_translate_en_com
+    data:
+      media_player_entity_id: media_player.kitchen_speaker
+      message: "{{ trigger.event.data.message }}"

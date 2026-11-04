@@ -1,0 +1,15 @@
+# Automation: announce every Bus Monitor alert on an Amazon Echo (Alexa Devices integration).
+# Paste as in announce_all_alerts.yaml.
+# Change: entity_id (your Echo's "Announce" or "Speak" entity).
+alias: Bus alerts on Echo
+description: Announces each bus alert on an Echo.
+mode: queued
+triggers:
+  - trigger: event
+    event_type: bus_monitor_alert
+actions:
+  - action: notify.send_message
+    target:
+      entity_id: notify.kitchen_echo_announce
+    data:
+      message: "{{ trigger.event.data.message }}"

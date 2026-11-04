@@ -1,0 +1,14 @@
+# Automation: send every Bus Monitor alert to a phone (Home Assistant Companion app).
+# Paste as in announce_all_alerts.yaml.
+# Change: the action name to your phone's notify action.
+alias: Bus alerts on phone
+description: Sends each bus alert to a phone.
+mode: queued
+triggers:
+  - trigger: event
+    event_type: bus_monitor_alert
+actions:
+  - action: notify.mobile_app_my_phone
+    data:
+      title: School bus
+      message: "{{ trigger.event.data.message }}"
