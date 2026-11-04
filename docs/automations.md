@@ -33,6 +33,11 @@ Don't test with an automation's **Run** button: it has no alert to read, so the 
 
 ## Announcements
 
+Prefer a form to YAML? The announcement blueprint does the same as the first sample below, and lets
+you pick which alerts and profiles to announce:
+
+[![Open the blueprint in Home Assistant](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Faniceberg%2FBusMonitor%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fbus_monitor%2Fannounce_bus_alerts.yaml)
+
 ### Every alert on Google Home / Nest speakers
 ```yaml
 alias: Bus alerts on speakers

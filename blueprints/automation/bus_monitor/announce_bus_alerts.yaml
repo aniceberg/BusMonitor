@@ -1,0 +1,71 @@
+blueprint:
+  name: Announce bus alerts
+  description: >-
+    Speaks each Bus Monitor alert on your speakers, for example "Bus 12 is about 10 minutes away."
+    Create one automation from this blueprint per group of speakers. To try it without waiting for
+    the bus, follow the test steps in the
+    [automations guide](https://github.com/aniceberg/BusMonitor/blob/main/docs/automations.md).
+  domain: automation
+  source_url: https://github.com/aniceberg/BusMonitor/blob/main/blueprints/automation/bus_monitor/announce_bus_alerts.yaml
+  input:
+    tts_entity:
+      name: Text-to-speech
+      description: The voice to speak with.
+      selector:
+        entity:
+          domain: tts
+    speakers:
+      name: Speakers
+      description: Where to speak. A speaker group announces in every room.
+      selector:
+        entity:
+          domain: media_player
+          multiple: true
+    alert_kinds:
+      name: Alerts to announce
+      default: [checkpoint, arrived, late, offline]
+      selector:
+        select:
+          multiple: true
+          options:
+            - label: Checkpoints (about 10 minutes away, at Elm Street)
+              value: checkpoint
+            - label: The bus has arrived
+              value: arrived
+            - label: Running late
+              value: late
+            - label: No GPS fix
+              value: offline
+    profiles:
+      name: Profiles (optional)
+      description: >-
+        Profile ids to announce, such as morning. Leave empty to announce every profile. The
+        profile's ⋮ menu → Reconfigure → Edit the profile shows its id.
+      default: []
+      selector:
+        text:
+          multiple: true
+
+mode: queued
+
+variables:
+  alert_kinds: !input alert_kinds
+  profiles: !input profiles
+
+triggers:
+  - trigger: event
+    event_type: bus_monitor_alert
+
+conditions:
+  - condition: template
+    value_template: "{{ trigger.event.data.kind in alert_kinds }}"
+  - condition: template
+    value_template: "{{ not profiles or trigger.event.data.profile in profiles }}"
+
+actions:
+  - action: tts.speak
+    target:
+      entity_id: !input tts_entity
+    data:
+      media_player_entity_id: !input speakers
+      message: "{{ trigger.event.data.message }}"

@@ -11,11 +11,23 @@
       },
       "traccar": {
         "title": "Connect to a Traccar GPS server",
-        "description": "Traccar server address (e.g. http://your-server:8082) and login, as given by your bus company. If the address starts with http://, the login is not encrypted in transit.",
+        "description": "Paste the Traccar server address and login your bus company gave you. The address can be copied straight from your browser, with or without http://. If the server only works with http://, the login is not encrypted in transit.",
         "data": {
           "base_url": "Server URL",
           "username": "Username",
           "password": "Password"
+        },
+        "data_description": {
+          "base_url": "For example gps.example.com:8082. Traccar servers usually use port 8082.",
+          "username": "Usually an email address."
+        }
+      },
+      "bouncie": {
+        "title": "Register a free Bouncie app",
+        "description": "Bouncie asks each person to register their own app, once. It takes about two minutes.\n\n1. Open the [Bouncie developer portal]({developer_portal_url}) and sign in with the Bouncie account that owns the vehicle.\n2. Create an application, and add this redirect URI exactly as written: `{redirect_url}`\n3. Copy the app's Client ID and Client Secret into the boxes below.\n\nNext, Bouncie asks you to approve access.",
+        "data": {
+          "client_id": "Client ID",
+          "client_secret": "Client Secret"
         }
       },
       "pick_implementation": {
@@ -23,7 +35,7 @@
       },
       "devices": {
         "title": "Choose buses",
-        "description": "Select the bus(es) to track. You can change this later by re-adding the integration.",
+        "description": "Select the bus(es) to follow. Next you'll set up the stop and schedule. A profile can also switch to any other vehicle on this account later.",
         "data": {
           "devices": "Buses"
         }
@@ -40,16 +52,18 @@
       }
     },
     "error": {
-      "cannot_connect": "Cannot reach the GPS server.",
-      "invalid_auth": "Username or password was rejected.",
-      "no_devices": "This login can't see any buses."
+      "invalid_url": "That doesn't look like a web address. It should look like gps.example.com:8082.",
+      "cannot_connect": "Nothing answered at this address. Check the address and port (Traccar servers usually use 8082), and that Home Assistant can reach the server.",
+      "not_traccar": "Something answered at this address, but it isn't a Traccar server. Ask your bus company for the exact server address.",
+      "invalid_auth": "The server rejected this username or password.",
+      "no_devices": "You're signed in, but this login can't see any buses. Ask your bus company to share the bus with this login."
     },
     "abort": {
       "already_configured": "This account is already set up.",
       "reauth_successful": "Re-authentication was successful.",
       "cannot_connect": "Cannot reach the tracking provider.",
       "invalid_auth": "The sign-in was rejected.",
-      "no_devices": "This account can't see any vehicles.",
+      "no_devices": "This Bouncie account has no vehicles yet. Add the vehicle in the Bouncie app, then try again.",
       "wrong_account": "You signed in to a different Bouncie account than the one this entry uses.",
       "missing_configuration": "Bouncie isn't configured: add Application credentials for Bus Monitor first."
     },
@@ -113,7 +127,7 @@
     }
   },
   "application_credentials": {
-    "description": "Register an app at {developer_portal_url}, add the redirect URI {redirect_url}, then paste its Client ID and Client Secret here."
+    "description": "Register an app in the [Bouncie developer portal]({developer_portal_url}), add the redirect URI `{redirect_url}`, then paste its Client ID and Client Secret here."
   },
   "issues": {
     "season_over": {
@@ -131,7 +145,7 @@
       "step": {
         "user": {
           "title": "Add a bus profile",
-          "description": "Pick the stop on the map, or tick 'use bus position' to use where the bus is right now. Make one profile for the morning and another for the afternoon if the times differ.",
+          "description": "Name this trip, then drag the map pin from your home to your stop, or tick 'use bus position' to use where the bus is right now. Make one profile for the morning and another for the afternoon if the times differ.",
           "data": {
             "name": "Profile name",
             "announce_as": "Announce as (optional)",
@@ -206,13 +220,16 @@
         }
       },
       "error": {
-        "location_required": "Pick a location, or tick 'use bus position'.",
+        "location_required": "Drag the map pin to the spot, or tick 'use bus position'.",
         "name_exists": "That name is already used by another bus profile.",
         "street_lookup_failed": "Couldn't look up the street name. Type a name, or try again in a minute.",
         "season_end_past": "That date has already passed. Pick the last day of this school year."
       },
       "abort": {
         "no_checkpoints": "This profile has no checkpoints."
+      },
+      "create_entry": {
+        "default": "Profile saved. To hear alerts, [add the announcement blueprint]({blueprint_url}) or use a [ready-made automation]({guide_url}). Add alert checkpoints from the profile's ⋮ menu → Reconfigure, or on the Bus Monitor map."
       }
     }
   }
