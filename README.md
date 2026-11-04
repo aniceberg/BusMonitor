@@ -54,11 +54,10 @@ Bouncie login). Each bus profile follows one vehicle from its entry.
 > the credentials and bus positions travel unencrypted. They're stored only in the Home
 > Assistant config entry. Ask the vendor for HTTPS or a separate login if you can.
 
-## Announce on Google Home
-Every alert fires a `bus_monitor_alert` event. Create an automation with an **Event** trigger
-for `bus_monitor_alert` and a **Text-to-speech: Speak** action that targets your Google Home
-speakers, with the message set to `{{ trigger.event.data.message }}`. Every alert carries a
-ready-to-speak sentence, e.g. "Bus 12 is about 10 minutes away.", "Bus 12 is at Elm Street.",
+## Announcements and voice
+Every alert fires a `bus_monitor_alert` event, and an automation speaks it. **[docs/automations.md](docs/automations.md)
+has paste-ready YAML** for Google Home, Amazon Echo and phones, plus "where is the bus?" for
+Assist, Google and Alexa. Every alert carries a ready-to-speak sentence, e.g. "Bus 12 is about 10 minutes away.", "Bus 12 is at Elm Street.",
 "Bus 12 has arrived." or "Bus 12 is running about 12 minutes late."
 
 Event data: `message`, `kind`, `type` (`time`/`street` for checkpoints), `bus` (the *Announce as* name, else e.g. "Bus 12"), `profile`,
@@ -136,10 +135,10 @@ TRACCAR_URL=http://your-server:8082 TRACCAR_USER=... TRACCAR_PASS=... .venv/bin/
 BOUNCIE_TOKEN=... .venv/bin/python scripts/bouncie_probe.py 10 30   # how often Bouncie positions refresh
 ```
 
-## Where is the bus? (Google Home)
+## Where is the bus?
 `bus_monitor.describe_location` answers with the street the bus is on, the cross streets either
-side, its heading, and distance/minutes to your stop, and can speak it on your speakers.
-See [docs/google_home.md](docs/google_home.md) and [examples/where_is_the_bus.yaml](examples/where_is_the_bus.yaml).
+side, its heading, and distance/minutes to your stop, and can speak it on your speakers. See
+[docs/automations.md](docs/automations.md#where-is-the-bus-by-voice).
 
 ## Brand images
 `custom_components/bus_monitor/brand/` holds the icon and logo (light and `dark_` variants) used by

@@ -1,0 +1,15 @@
+# Script: say where the bus is on Google Home / Nest (or any media player with TTS).
+# Settings > Automations & scenes > Scripts > Create script > Create new script,
+# then the top-right menu > Edit in YAML, and replace everything with this.
+# Change: profile, tts_entity, media_player_entity.
+alias: Where is the bus
+description: Says where the bus is on the speakers.
+icon: mdi:bus-school
+mode: single
+sequence:
+  - action: bus_monitor.describe_location
+    data:
+      profile: morning
+      tts_entity: tts.google_translate_en_com
+      media_player_entity:
+        - media_player.kitchen_speaker

@@ -1,0 +1,18 @@
+# Script: say where the bus is on an Amazon Echo, using the Alexa Devices integration.
+# Settings > Automations & scenes > Scripts > Create script > Create new script,
+# then the top-right menu > Edit in YAML, and replace everything with this.
+# Change: profile, and the notify entity (your Echo's "Speak" entity).
+alias: Where is the bus (Alexa)
+description: Says where the bus is on an Echo.
+icon: mdi:bus-school
+mode: single
+sequence:
+  - action: bus_monitor.describe_location
+    data:
+      profile: morning
+    response_variable: bus
+  - action: notify.send_message
+    target:
+      entity_id: notify.kitchen_echo_speak
+    data:
+      message: "{{ bus.text }}"

@@ -1,0 +1,18 @@
+# Automation: ask Home Assistant's own voice assistant (Assist) where the bus is.
+# Assist speaks the answer back on the device you asked. No cloud account needed.
+# Paste as in announce_all_alerts.yaml.
+# Change: profile.
+alias: Assist - where is the bus
+description: Answers "where is the bus" in Assist.
+mode: single
+triggers:
+  - trigger: conversation
+    command:
+      - "where is the bus"
+      - "where's the bus"
+actions:
+  - action: bus_monitor.describe_location
+    data:
+      profile: morning
+    response_variable: bus
+  - set_conversation_response: "{{ bus.text }}"
