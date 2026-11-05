@@ -10,6 +10,7 @@ CONF_PROVIDER = "provider"  # data: which tracking provider this entry reads fro
 
 PROVIDER_TRACCAR = "traccar"
 PROVIDER_BOUNCIE = "bouncie"
+PROVIDER_HA_TRACKER = "device_tracker"  # any GPS tracker already in Home Assistant
 
 # options
 OPT_PROFILES = "profiles"  # before 2.3: {profile_id: {...}} in the entry options
@@ -22,7 +23,11 @@ OPT_SHOW_PANEL = "show_panel"  # Bus Monitor map in the sidebar (default on)
 
 # Polling seconds per provider as (default, minimum). Bouncie's cloud API is polled more
 # gently until we know how often it refreshes (scripts/bouncie_probe.py).
-SCAN_INTERVALS = {PROVIDER_TRACCAR: (10, 5), PROVIDER_BOUNCIE: (30, 15)}
+SCAN_INTERVALS = {
+    PROVIDER_TRACCAR: (10, 5),
+    PROVIDER_BOUNCIE: (30, 15),
+    PROVIDER_HA_TRACKER: (10, 5),
+}
 
 EVENT_ALERT = "bus_monitor_alert"
 EVENT_SHADOW = "bus_monitor_shadow"  # shadow-mode checkpoint crossings (never announced)
