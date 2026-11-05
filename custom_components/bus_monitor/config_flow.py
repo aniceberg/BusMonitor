@@ -9,17 +9,26 @@ from typing import Any
 
 import aiohttp
 import voluptuous as vol
+from homeassistant.components.application_credentials import (
+    ClientCredential,
+    async_import_client_credential,
+)
 from homeassistant.config_entries import (
     SOURCE_REAUTH,
+    SOURCE_USER,
     ConfigEntry,
     ConfigFlowResult,
     ConfigSubentryFlow,
+    FlowType,
     OptionsFlow,
+    SubentryFlowContext,
     SubentryFlowResult,
 )
+from homeassistant.const import CONF_CLIENT_ID, CONF_CLIENT_SECRET
 from homeassistant.core import callback
 from homeassistant.helpers import config_entry_oauth2_flow, selector
 from homeassistant.helpers.aiohttp_client import async_create_clientsession, async_get_clientsession
+from homeassistant.helpers.network import NoURLAvailableError
 from homeassistant.util import dt as dt_util
 from homeassistant.util import slugify
 
@@ -44,7 +53,15 @@ from .models import KIND_STREET, KIND_TIME, default_season_end
 from .profiles import profile_settings, taken_names
 from .providers import CannotConnect, Device, InvalidAuth
 from .providers.bouncie import BouncieClient, FixedToken
-from .providers.traccar import TraccarClient
+from .providers.traccar import NotTraccar, TraccarClient, resolve_server
+
+BOUNCIE_PORTAL_URL = "https://www.bouncie.dev"
+BLUEPRINT_IMPORT_URL = (
+    "https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url="
+    "https%3A%2F%2Fgithub.com%2Faniceberg%2FBusMonitor%2Fblob%2Fmain%2Fblueprints%2Fautomation"
+    "%2Fbus_monitor%2Fannounce_bus_alerts.yaml"
+)
+GUIDE_URL = "https://github.com/aniceberg/BusMonitor/blob/main/docs/automations.md"
 
 WEEKDAY_OPTIONS = [
     selector.SelectOptionDict(value=str(i), label=n)
@@ -77,8 +94,12 @@ class BusMonitorConfigFlow(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, d
     def logger(self) -> logging.Logger:
         return logging.getLogger(__name__)
 
-    async def _async_connect(self, conn: Mapping[str, Any]) -> list[Device]:
-        session = async_create_clientsession(self.hass, cookie_jar=aiohttp.CookieJar(unsafe=True))
+    def _session(self) -> aiohttp.ClientSession:
+        return async_create_clientsession(self.hass, cookie_jar=aiohttp.CookieJar(unsafe=True))
+
+    async def _async_connect(
+        self, session: aiohttp.ClientSession, conn: Mapping[str, Any]
+    ) -> list[Device]:
         client = TraccarClient(
             session, conn[CONF_BASE_URL], conn[CONF_USERNAME], conn[CONF_PASSWORD]
         )
@@ -91,41 +112,80 @@ class BusMonitorConfigFlow(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, d
     async def async_step_traccar(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
-            user_input[CONF_BASE_URL] = user_input[CONF_BASE_URL].rstrip("/")
+            username = user_input[CONF_USERNAME].strip()
+            session = self._session()
             try:
-                self._devices = await self._async_connect(user_input)
+                base_url = await resolve_server(session, user_input[CONF_BASE_URL])
+                conn = {**user_input, CONF_BASE_URL: base_url, CONF_USERNAME: username}
+                self._devices = await self._async_connect(session, conn)
+            except ValueError:
+                errors[CONF_BASE_URL] = "invalid_url"
             except InvalidAuth:
                 errors["base"] = "invalid_auth"
+            except NotTraccar:
+                errors[CONF_BASE_URL] = "not_traccar"
             except CannotConnect:
-                errors["base"] = "cannot_connect"
+                errors[CONF_BASE_URL] = "cannot_connect"
             else:
                 if not self._devices:
                     errors["base"] = "no_devices"
                 else:
-                    self._conn = {**user_input, CONF_PROVIDER: PROVIDER_TRACCAR}
-                    await self.async_set_unique_id(
-                        f"{user_input[CONF_BASE_URL]}|{user_input[CONF_USERNAME]}"
-                    )
+                    self._conn = {**conn, CONF_PROVIDER: PROVIDER_TRACCAR}
+                    await self.async_set_unique_id(f"{base_url}|{username}")
                     self._abort_if_unique_id_configured()
                     return await self.async_step_devices()
+        schema = vol.Schema(
+            {
+                vol.Required(CONF_BASE_URL): selector.TextSelector(
+                    selector.TextSelectorConfig(type=selector.TextSelectorType.URL)
+                ),
+                vol.Required(CONF_USERNAME): str,
+                vol.Required(CONF_PASSWORD): selector.TextSelector(
+                    selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
+                ),
+            }
+        )
         return self.async_show_form(
             step_id="traccar",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_BASE_URL): selector.TextSelector(
-                        selector.TextSelectorConfig(type=selector.TextSelectorType.URL)
-                    ),
-                    vol.Required(CONF_USERNAME): str,
-                    vol.Required(CONF_PASSWORD): selector.TextSelector(
-                        selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
-                    ),
-                }
+            data_schema=self.add_suggested_values_to_schema(
+                schema, {k: v for k, v in (user_input or {}).items() if k != CONF_PASSWORD}
             ),
             errors=errors,
         )
 
     async def async_step_bouncie(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        return await self.async_step_pick_implementation()
+        """Sign in to Bouncie; the first time, register the Bouncie app right here."""
+        if user_input is not None:
+            await async_import_client_credential(
+                self.hass,
+                DOMAIN,
+                ClientCredential(
+                    user_input[CONF_CLIENT_ID].strip(),
+                    user_input[CONF_CLIENT_SECRET].strip(),
+                    "Bouncie",
+                ),
+            )
+        if await config_entry_oauth2_flow.async_get_implementations(self.hass, DOMAIN):
+            return await self.async_step_pick_implementation()
+        try:
+            redirect_url = config_entry_oauth2_flow.async_get_redirect_uri(self.hass)
+        except NoURLAvailableError:
+            redirect_url = config_entry_oauth2_flow.MY_AUTH_CALLBACK_PATH
+        return self.async_show_form(
+            step_id="bouncie",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_CLIENT_ID): str,
+                    vol.Required(CONF_CLIENT_SECRET): selector.TextSelector(
+                        selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
+                    ),
+                }
+            ),
+            description_placeholders={
+                "developer_portal_url": BOUNCIE_PORTAL_URL,
+                "redirect_url": redirect_url,
+            },
+        )
 
     async def async_oauth_create_entry(self, data: dict[str, Any]) -> ConfigFlowResult:
         """Bouncie sign-in finished: identify the user, then let them pick vehicles."""
@@ -172,6 +232,16 @@ class BusMonitorConfigFlow(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, d
             ),
         )
 
+    async def async_on_create_entry(self, result: ConfigFlowResult) -> ConfigFlowResult:
+        """Connected: go straight on to the first bus profile (closing it is fine, "Add bus
+        profile" stays on the integration page)."""
+        profile_flow = await self.hass.config_entries.subentries.async_init(
+            (result["result"].entry_id, SUBENTRY_PROFILE),
+            context=SubentryFlowContext(source=SOURCE_USER),
+        )
+        result["next_flow"] = (FlowType.CONFIG_SUBENTRIES_FLOW, profile_flow["flow_id"])
+        return result
+
     async def async_step_reauth(self, entry_data: Mapping[str, Any]) -> ConfigFlowResult:
         if entry_data.get(CONF_PROVIDER) == PROVIDER_BOUNCIE:
             return await self.async_step_reauth_bouncie()
@@ -192,7 +262,7 @@ class BusMonitorConfigFlow(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, d
         if user_input is not None:
             conn = {**entry.data, **user_input}
             try:
-                await self._async_connect(conn)
+                await self._async_connect(self._session(), conn)
             except InvalidAuth:
                 errors["base"] = "invalid_auth"
             except CannotConnect:
@@ -375,10 +445,34 @@ class BusProfileSubentryFlow(ConfigSubentryFlow):
                     title=settings["name"],
                     data={**settings, CONF_PROFILE_ID: pid},
                     unique_id=pid,
+                    description_placeholders={
+                        "blueprint_url": BLUEPRINT_IMPORT_URL,
+                        "guide_url": GUIDE_URL,
+                    },
                 )
         return self.async_show_form(
-            step_id="user", errors=errors, data_schema=self._profile_schema()
+            step_id="user",
+            errors=errors,
+            data_schema=self.add_suggested_values_to_schema(
+                self._profile_schema(), user_input or self._new_profile_suggestions()
+            ),
         )
+
+    def _new_profile_suggestions(self) -> dict[str, Any]:
+        """Prefill the form: the first bus in use, the name "Morning" if it's free, and a stop
+        at home. Without a value the map still draws a pin there, but ignores it until it's
+        dragged, and then stores the map's own 1 km radius, so "arrived" comes far too early."""
+        suggested: dict[str, Any] = {
+            "device": self._device_options()[0]["value"],
+            "location": {
+                "latitude": self.hass.config.latitude,
+                "longitude": self.hass.config.longitude,
+                "radius": 75,
+            },
+        }
+        if "morning" not in taken_names(self.hass):
+            suggested["name"] = "Morning"
+        return suggested
 
     # -- reconfigure ----------------------------------------------------------------
     async def async_step_reconfigure(

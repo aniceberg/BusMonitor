@@ -5,7 +5,7 @@
   </picture>
 </p>
 
-# Bus Monitor (Home Assistant / HACS)
+# Bus Monitor for Home Assistant
 
 School-bus arrival alerts for Home Assistant, fed by a vehicle-tracking provider:
 - a **Traccar** GPS server (tested with Traccar 4.1); your bus company gives you the server
@@ -30,14 +30,29 @@ Bouncie login). Each bus profile follows one vehicle from its entry.
   trial new locations silently.
 
 ## Install
-1. HACS -> Custom repositories -> add this repo as an *Integration*.
-2. Install, restart Home Assistant, then Settings -> Devices & services -> Add -> **Bus Monitor**.
-3. Choose **Traccar GPS server** and enter the server URL and shared login, or choose
-   **Bouncie** and sign in (one-time app setup: [docs/bouncie.md](docs/bouncie.md)). Then
-   choose the bus(es).
-4. On the Bus Monitor integration page, choose **Add bus profile** under the Traccar server or
-   Bouncie account. Each profile is listed there with its own device and entities. To change
-   one, open its ⋮ menu → **Reconfigure**:
+You need Home Assistant 2026.10 or newer. Installing from the Marketplace needs 2026.11, or HACS
+on older versions.
+
+1. Open **Settings → Marketplace**, search for **Bus Monitor** and choose **Install**. If Home
+   Assistant asks for a restart, restart it. If the search finds nothing yet, add this repository
+   by link in the Marketplace (that needs a GitHub connection).
+2. Add the integration:
+
+   [![Add Bus Monitor to Home Assistant](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=bus_monitor)
+
+   Or go to Settings → Devices & services → Add integration → **Bus Monitor**.
+3. Choose your provider:
+   - **Traccar GPS server**: paste the server address and login. Copying the address from your
+     browser is fine, with or without `http://`.
+   - **Bouncie**: register a free app, then sign in. The setup screen walks you through it, and
+     [docs/bouncie.md](docs/bouncie.md) has the details.
+4. Choose the bus(es). Setup goes straight on to your first bus profile: its name, stop and
+   schedule. The stop starts at your home, so drag the pin to the real stop. If you close that screen, choose **Add bus profile** under the Traccar server or
+   Bouncie account on the Bus Monitor integration page.
+5. Make alerts speak with the [announcement blueprint](#announcements-and-voice).
+
+Each profile is listed on the integration page with its own device and entities. To change one,
+open its ⋮ menu → **Reconfigure**:
    - **Edit the profile**: rename it, or change its bus, stop, schedule or school year. Its
      checkpoints, recorded trips and entity IDs are kept.
    - **Add an alert checkpoint** (repeat per alert), or **Remove checkpoints**.
@@ -55,8 +70,13 @@ Bouncie login). Each bus profile follows one vehicle from its entry.
 > Assistant config entry. Ask the vendor for HTTPS or a separate login if you can.
 
 ## Announcements and voice
-Every alert fires a `bus_monitor_alert` event, and an automation speaks it. **[docs/automations.md](docs/automations.md)
-has paste-ready YAML** for Google Home, Amazon Echo and phones, plus "where is the bus?" for
+The quickest way to hear alerts is the announcement blueprint. Pick a voice and speakers, and
+optionally which alerts and profiles to announce:
+
+[![Open the blueprint in Home Assistant](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Faniceberg%2FBusMonitor%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fbus_monitor%2Fannounce_bus_alerts.yaml)
+
+Every alert fires a `bus_monitor_alert` event, and an automation speaks it. For anything else,
+**[docs/automations.md](docs/automations.md) has paste-ready YAML** for Google Home, Amazon Echo and phones, plus "where is the bus?" for
 Assist, Google and Alexa. Every alert carries a ready-to-speak sentence, e.g. "Bus 12 is about 10 minutes away.", "Bus 12 is at Elm Street.",
 "Bus 12 has arrived." or "Bus 12 is running about 12 minutes late."
 
@@ -127,6 +147,14 @@ with p10/p90/count as attributes).
 - `bus_monitor.describe_location` (`profile`, optional `tts_entity` + `media_player_entity`) returns `text` and details.
 - `bus_monitor.reset_trip` (`profile`) clears today's state.
 
+## Reporting a problem
+On the Bus Monitor integration page, open the ⋮ menu of the Traccar server or Bouncie account and
+choose **Download diagnostics**, then attach the file to a
+[GitHub issue](https://github.com/aniceberg/BusMonitor/issues). It shows the provider, polling
+state, schedules and checkpoint counts. It leaves out server addresses, logins, tokens, names,
+vehicle ids and every coordinate, and refers to vehicles and profiles as `vehicle_1` and
+`profile_1`. Schedule times such as the normal arrival time are included.
+
 ## Development
 ```bash
 uv venv --python 3.14 && uv pip install pytest-homeassistant-custom-component ruff
@@ -146,5 +174,5 @@ HACS and the Home Assistant UI. Regenerate them with `.venv/bin/python scripts/m
 (needs the Nunito Sans font, SIL Open Font License).
 
 ## Roadmap
-- WebSocket push (`/api/socket`) instead of polling; blueprint automation.
+- WebSocket push (`/api/socket`) instead of polling.
 - Bouncie `tripData` webhooks: not needed so far, since polling returned a new position every 15 s on real trips (see docs/bouncie.md).

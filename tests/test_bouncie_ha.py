@@ -11,6 +11,7 @@ from homeassistant.components.application_credentials import (
     ClientCredential,
     async_import_client_credential,
 )
+from homeassistant.config_entries import FlowType
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import config_entry_oauth2_flow
@@ -89,14 +90,39 @@ async def test_bouncie_oauth_flow(hass: HomeAssistant, hass_client_no_auth, aioc
     with patch("custom_components.bus_monitor.config_flow.BouncieClient", return_value=_bouncie()):
         result = await hass.config_entries.flow.async_configure(result["flow_id"])
         assert result["step_id"] == "devices"
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {"devices": [IMEI]}
-        )
+        with patch("custom_components.bus_monitor.BouncieClient", return_value=_bouncie()):
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"], {"devices": [IMEI]}
+            )
+            await hass.async_block_till_done()
     assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["next_flow"][0] == FlowType.CONFIG_SUBENTRIES_FLOW
     assert result["title"] == "Bouncie (Pat)"
     assert result["result"].unique_id == f"bouncie|{USER['id']}"
     data = result["data"]
     assert (data["provider"], data["devices"], data["token"]["access_token"]) == ("bouncie", [IMEI], "a")
+
+
+@pytest.mark.usefixtures("current_request_with_host")
+async def test_first_bouncie_setup_registers_the_app_in_the_flow(hass: HomeAssistant):
+    assert await async_setup_component(hass, "application_credentials", {})
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "bouncie"}
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "bouncie"
+    assert result["description_placeholders"]["developer_portal_url"] == "https://www.bouncie.dev"
+    assert "/auth/external/callback" in result["description_placeholders"]["redirect_url"] or (
+        result["description_placeholders"]["redirect_url"]
+        == "https://my.home-assistant.io/redirect/oauth"
+    )
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"client_id": " cid ", "client_secret": " secret "}
+    )
+    assert result["type"] is FlowResultType.EXTERNAL_STEP
+    assert result["url"].startswith(f"{AUTHORIZE_URL}?response_type=code&client_id=cid&")
 
 
 @pytest.mark.usefixtures("credentials")

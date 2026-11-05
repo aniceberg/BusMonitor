@@ -6,31 +6,44 @@ well as, a Traccar server. Each Bouncie account is a separate Bus Monitor entry.
 setup works exactly as it does with Traccar: profiles, checkpoints, the map panel, alerts and
 `describe_location`.
 
-Bouncie has no shared app for Home Assistant, so you register your own (free) app once.
+Bouncie has no shared app for Home Assistant, so you register your own free app, once. Bus
+Monitor's setup screen walks you through it, and this page has the same steps with more detail.
 
-## 1. Register an app with Bouncie
-1. Sign in at <https://www.bouncie.dev> with the Bouncie account that owns the vehicle.
-2. Create an application.
-3. Add this **Redirect URI** exactly as written:
+## Set it up
+1. Start adding the integration:
+
+   [![Add Bus Monitor to Home Assistant](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=bus_monitor)
+
+   Or go to Settings → Devices & services → Add integration → **Bus Monitor**. Then choose **Bouncie**.
+2. Keep that screen open. In another tab, sign in to the
+   [Bouncie developer portal](https://www.bouncie.dev) with the Bouncie account that owns the
+   vehicle, and create an application.
+3. Add the **redirect URI** the setup screen shows, exactly as written. It's normally this one:
    ```
    https://my.home-assistant.io/redirect/oauth
    ```
-4. Copy the app's **Client ID** and **Client Secret**.
+   You don't need to set up webhooks. Bus Monitor polls the REST API.
+4. Copy the app's **Client ID** and **Client Secret** into the setup screen and continue.
+5. Sign in to Bouncie and approve access.
+6. Choose the vehicle(s) to track. Setup then goes straight on to your first bus profile, as with
+   Traccar.
 
-You don't need to set up webhooks. Bus Monitor polls the REST API.
+The redirect goes through My Home Assistant, which is on by default through `default_config`. The
+first time, it may ask for your Home Assistant address. Your browser must be able to reach that
+address.
 
-## 2. Give Home Assistant the credentials
-Settings → Devices & services → ⋮ → **Application credentials** → **Add**. Pick **Bus Monitor**,
-then paste the Client ID and Client Secret.
+## Adding a second Bouncie account
+Add the integration again and choose **Bouncie**. The app you registered is reused, so you go
+straight to the Bouncie sign-in. Sign out of Bouncie first if your browser is still signed in to
+the other account.
 
-The redirect goes through My Home Assistant, so make sure **My Home Assistant** is enabled (it is
-by default through `default_config`). Your browser must be able to reach your Home Assistant URL.
+## If sign-in fails
+A mistyped Client ID or Client Secret, or a different redirect URI, usually shows up as an error on
+Bouncie's page or as "failed to obtain token". Check the app in the
+[Bouncie developer portal](https://www.bouncie.dev), then delete the saved credentials and add the
+integration again to enter them afresh:
 
-## 3. Add the integration
-Settings → Devices & services → Add → **Bus Monitor** → **Bouncie**.
-1. Sign in to Bouncie and approve access.
-2. Choose the vehicle(s) to track.
-3. Choose **Add bus profile** under the Bouncie account, as with Traccar.
+[![Open application credentials in Home Assistant](https://my.home-assistant.io/badges/application_credentials.svg)](https://my.home-assistant.io/redirect/application_credentials/)
 
 If Bouncie later asks you to sign in again, for example because the token wasn't used for a long
 time, Home Assistant shows a **Reauthenticate** prompt. Sign in to the *same* Bouncie account.

@@ -5,8 +5,11 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
+import pytest
+from homeassistant.config_entries import ConfigEntryState, FlowType
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_fire_time_changed,
@@ -17,10 +20,32 @@ from custom_components.bus_monitor.const import DOMAIN, EVENT_ALERT
 from custom_components.bus_monitor.models import Position
 from custom_components.bus_monitor.profiles import entry_profiles, profile_subentries
 from custom_components.bus_monitor.providers import CannotConnect, Device, InvalidAuth
+from custom_components.bus_monitor.providers.traccar import NotTraccar
 
 CONN = {"base_url": "http://gps.example:8082", "username": "u", "password": "p"}
 DATA = {**CONN, "provider": "traccar", "devices": ["1"]}
 DEVICES = [Device("1", "Bus 12", "b12"), Device("2", "Bus 34", "b34")]
+
+
+NEW_PROFILE = {
+    "name": "Morning",
+    "device": "2",
+    "location": {"latitude": 40.0, "longitude": -75.0, "radius": 75},
+    "late_grace_min": 10,
+    "active_start": "05:30:00",
+    "active_end": "09:30:00",
+    "weekdays": ["0", "1", "2", "3", "4"],
+    "offline_after_min": 0,
+    "season_end": "2099-06-30",
+}
+
+
+def suggested(form, field):
+    """The value a form prefills for one field."""
+    for key in form["data_schema"].schema:
+        if key == field:
+            return (key.description or {}).get("suggested_value")
+    raise KeyError(field)
 
 
 def _client(positions=None, login_exc=None):
@@ -32,32 +57,158 @@ def _client(positions=None, login_exc=None):
     return client
 
 
-async def test_config_flow_happy_path(hass: HomeAssistant):
-    with patch("custom_components.bus_monitor.config_flow.TraccarClient", return_value=_client()):
-        result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
-        assert result["type"] is FlowResultType.MENU
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {"next_step_id": "traccar"}
-        )
+async def _traccar_form(hass):
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
+    assert result["type"] is FlowResultType.MENU
+    return await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "traccar"}
+    )
+
+
+async def test_config_flow_happy_path_leads_into_the_first_profile(hass: HomeAssistant):
+    client = _client()
+    with (
+        patch("custom_components.bus_monitor.config_flow.TraccarClient", return_value=client),
+        patch("custom_components.bus_monitor.TraccarClient", return_value=client),
+    ):
+        result = await _traccar_form(hass)
         result = await hass.config_entries.flow.async_configure(result["flow_id"], CONN)
         assert result["step_id"] == "devices"
-        result = await hass.config_entries.flow.async_configure(result["flow_id"], {"devices": ["1"]})
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {"devices": ["2"]})
+        await hass.async_block_till_done()
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["data"] == DATA
+    assert result["data"] == {**DATA, "devices": ["2"]}
+
+    # The app opens this flow next: the profile form, with the picked bus preselected.
+    flow_type, flow_id = result["next_flow"]
+    assert flow_type == FlowType.CONFIG_SUBENTRIES_FLOW
+    form = hass.config_entries.subentries.async_get(flow_id)
+    assert form["step_id"] == "user"
+    entry = result["result"]
+    assert form["handler"] == (entry.entry_id, "bus_profile")
+    shown = await hass.config_entries.subentries.async_configure(flow_id)
+    assert suggested(shown, "device") == "2"
+    assert suggested(shown, "name") == "Morning"
+    assert suggested(shown, "location") == {
+        "latitude": hass.config.latitude,
+        "longitude": hass.config.longitude,
+        "radius": 75,
+    }
+
+    with patch("custom_components.bus_monitor.TraccarClient", return_value=client):
+        done = await hass.config_entries.subentries.async_configure(flow_id, NEW_PROFILE)
+        await hass.async_block_till_done()
+    assert done["type"] is FlowResultType.CREATE_ENTRY
+    assert "blueprint_url" in done["description_placeholders"]
+    assert entry_profiles(entry)["morning"]["device_id"] == "2"
 
 
-async def test_config_flow_errors(hass: HomeAssistant):
-    for exc, key in ((InvalidAuth, "invalid_auth"), (CannotConnect, "cannot_connect")):
-        with patch(
-            "custom_components.bus_monitor.config_flow.TraccarClient",
-            return_value=_client(login_exc=exc),
-        ):
-            result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
-            result = await hass.config_entries.flow.async_configure(
-                result["flow_id"], {"next_step_id": "traccar"}
-            )
-            result = await hass.config_entries.flow.async_configure(result["flow_id"], CONN)
-        assert result["errors"] == {"base": key}
+async def test_first_profile_form_opens_even_if_the_server_just_went_down(hass: HomeAssistant):
+    with (
+        patch("custom_components.bus_monitor.config_flow.TraccarClient", return_value=_client()),
+        patch(
+            "custom_components.bus_monitor.TraccarClient",
+            return_value=_client(login_exc=CannotConnect("down")),
+        ),
+    ):
+        result = await _traccar_form(hass)
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], CONN)
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {"devices": ["1"]})
+        await hass.async_block_till_done()
+    assert result["result"].state is ConfigEntryState.SETUP_RETRY
+    form = await hass.config_entries.subentries.async_configure(result["next_flow"][1])
+    assert form["step_id"] == "user"
+    assert suggested(form, "device") == "1"
+
+
+async def test_failed_profile_form_keeps_what_was_typed(hass: HomeAssistant):
+    entry = await _setup(hass, _client())
+    result = await hass.config_entries.subentries.async_init(
+        (entry.entry_id, "bus_profile"), context={"source": "user"}
+    )
+    # "Morning" is taken here, so it isn't suggested.
+    assert suggested(result, "name") is None
+    result = await hass.config_entries.subentries.async_configure(
+        result["flow_id"], {k: v for k, v in {**NEW_PROFILE, "name": "Afternoon"}.items() if k != "location"}
+    )
+    assert result["errors"] == {"base": "location_required"}
+    assert suggested(result, "name") == "Afternoon"
+
+
+@pytest.mark.parametrize(
+    ("exc", "errors"),
+    [
+        (InvalidAuth, {"base": "invalid_auth"}),
+        (CannotConnect, {"base_url": "cannot_connect"}),
+        (NotTraccar, {"base_url": "not_traccar"}),
+    ],
+)
+async def test_config_flow_errors(hass: HomeAssistant, exc, errors):
+    with patch(
+        "custom_components.bus_monitor.config_flow.TraccarClient",
+        return_value=_client(login_exc=exc),
+    ):
+        result = await _traccar_form(hass)
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], CONN)
+    assert result["errors"] == errors
+    assert suggested(result, "base_url") == CONN["base_url"]
+    assert suggested(result, "password") is None
+
+
+async def test_config_flow_no_vehicles(hass: HomeAssistant):
+    client = _client()
+    client.devices.return_value = []
+    with patch("custom_components.bus_monitor.config_flow.TraccarClient", return_value=client):
+        result = await _traccar_form(hass)
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], CONN)
+    assert result["errors"] == {"base": "no_devices"}
+
+
+async def test_config_flow_rejects_what_cant_be_an_address(hass: HomeAssistant):
+    result = await _traccar_form(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {**CONN, "base_url": "ask the bus company"}
+    )
+    assert result["errors"] == {"base_url": "invalid_url"}
+
+
+async def test_config_flow_stores_the_normalised_address(hass: HomeAssistant, aioclient_mock):
+    aioclient_mock.get("https://gps.example:8082/api/server", exc=TimeoutError())
+    aioclient_mock.get("http://gps.example:8082/api/server", json={"version": "4.1"})
+    aioclient_mock.post("http://gps.example:8082/api/session", json={"id": 1})
+    aioclient_mock.get(
+        "http://gps.example:8082/api/devices", json=[{"id": 1, "name": "Bus 12"}]
+    )
+    with (
+        patch(
+            "custom_components.bus_monitor.config_flow.async_create_clientsession",
+            return_value=async_get_clientsession(hass),
+        ),
+        patch("custom_components.bus_monitor.TraccarClient", return_value=_client()),
+    ):
+        result = await _traccar_form(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {"base_url": " gps.example:8082/login ", "username": " u ", "password": " p "},
+        )
+        assert result["step_id"] == "devices"
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {"devices": ["1"]})
+        await hass.async_block_till_done()
+    assert result["data"] == {**DATA, "password": " p "}
+    assert result["result"].unique_id == "http://gps.example:8082|u"
+
+
+async def test_same_server_pasted_differently_is_already_configured(hass: HomeAssistant):
+    MockConfigEntry(
+        domain=DOMAIN, version=2, unique_id="http://gps.example:8082|u", data=DATA
+    ).add_to_hass(hass)
+    with patch("custom_components.bus_monitor.config_flow.TraccarClient", return_value=_client()):
+        result = await _traccar_form(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {**CONN, "base_url": "http://GPS.example:8082/login"}
+        )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
 
 
 PROFILE = {
