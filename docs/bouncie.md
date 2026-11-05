@@ -71,5 +71,5 @@ Bus Monitor waits for the bus to move before it announces "running late" or "no 
 *Holidays and summer* in the README).
 
 ## Using Traccar and Bouncie together
-Add Bus Monitor twice, once per provider. Each bus profile follows one vehicle from its own
-entry, and the map panel and services work across all entries.
+Add the integration again for the second source. Each bus profile follows one vehicle from the
+source it's under, and the map panel and services work across all of them.
