@@ -10,7 +10,9 @@
 School-bus arrival alerts for Home Assistant, fed by a vehicle-tracking provider:
 - a **Traccar** GPS server (tested with Traccar 4.1); your bus company gives you the server
   address and login;
-- a **Bouncie** OBD-II tracker (see [docs/bouncie.md](docs/bouncie.md)).
+- a **Bouncie** OBD-II tracker (see [docs/bouncie.md](docs/bouncie.md));
+- **any GPS tracker already in Home Assistant**, from whichever integration made it (see
+  [docs/ha_trackers.md](docs/ha_trackers.md)).
 
 To use several providers, add Bus Monitor once per account (e.g. one Traccar server and one
 Bouncie login). Each bus profile follows one vehicle from its entry.
@@ -46,9 +48,11 @@ on older versions.
      browser is fine, with or without `http://`.
    - **Bouncie**: register a free app, then sign in. The setup screen walks you through it, and
      [docs/bouncie.md](docs/bouncie.md) has the details.
+   - **A GPS tracker already in Home Assistant**: no login, just pick the tracker. See
+     [docs/ha_trackers.md](docs/ha_trackers.md).
 4. Choose the bus(es). Setup goes straight on to your first bus profile: its name, stop and
-   schedule. The stop starts at your home, so drag the pin to the real stop. If you close that screen, choose **Add bus profile** under the Traccar server or
-   Bouncie account on the Bus Monitor integration page.
+   schedule. The stop starts at your home, so drag the pin to the real stop. If you close that screen, choose **Add bus profile** under that
+   provider on the Bus Monitor integration page.
 5. Make alerts speak with the [announcement blueprint](#announcements-and-voice).
 
 Each profile is listed on the integration page with its own device and entities. To change one,

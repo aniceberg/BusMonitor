@@ -1,4 +1,5 @@
-"""Bus Monitor: school-bus arrival alerts from a Traccar server or a Bouncie account."""
+"""Bus Monitor: school-bus arrival alerts from a Traccar server, a Bouncie account or any
+GPS tracker already in Home Assistant."""
 
 from __future__ import annotations
 
@@ -29,6 +30,7 @@ from .const import (
     DOMAIN,
     OPT_PROFILES,
     PROVIDER_BOUNCIE,
+    PROVIDER_HA_TRACKER,
     PROVIDER_TRACCAR,
     SERVICE_DESCRIBE,
     SERVICE_RESET_TRIP,
@@ -45,6 +47,7 @@ from .panel import async_setup_frontend, async_update_panel
 from .profiles import entry_profiles, new_profile_subentry
 from .providers import CannotConnect, InvalidAuth, Provider
 from .providers.bouncie import BouncieClient
+from .providers.ha_tracker import HomeAssistantTrackers
 from .providers.traccar import TraccarClient
 from .websocket import async_register_websocket
 
@@ -69,6 +72,8 @@ DESCRIBE_SCHEMA = vol.Schema(
 
 
 async def _async_provider(hass: HomeAssistant, entry: BusMonitorConfigEntry) -> Provider:
+    if entry.data[CONF_PROVIDER] == PROVIDER_HA_TRACKER:
+        return HomeAssistantTrackers(hass)
     if entry.data[CONF_PROVIDER] == PROVIDER_BOUNCIE:
         implementation = await config_entry_oauth2_flow.async_get_config_entry_implementation(
             hass, entry

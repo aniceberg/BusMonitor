@@ -43,6 +43,7 @@ from .const import (
     OPT_SCAN_INTERVAL,
     OPT_SHOW_PANEL,
     PROVIDER_BOUNCIE,
+    PROVIDER_HA_TRACKER,
     PROVIDER_TRACCAR,
     SCAN_INTERVALS,
     SUBENTRY_PROFILE,
@@ -53,6 +54,7 @@ from .models import KIND_STREET, KIND_TIME, default_season_end
 from .profiles import profile_settings, taken_names
 from .providers import CannotConnect, Device, InvalidAuth
 from .providers.bouncie import BouncieClient, FixedToken
+from .providers.ha_tracker import HomeAssistantTrackers
 from .providers.traccar import NotTraccar, TraccarClient, resolve_server
 
 BOUNCIE_PORTAL_URL = "https://www.bouncie.dev"
@@ -78,7 +80,8 @@ def _hhmm(value: str) -> str:
 
 
 class BusMonitorConfigFlow(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, domain=DOMAIN):
-    """Connect one tracking-provider account: a Traccar server or a Bouncie login (OAuth)."""
+    """Connect one position source: a Traccar server, a Bouncie login (OAuth) or the GPS
+    trackers already in this Home Assistant."""
 
     DOMAIN = DOMAIN
     VERSION = 2
@@ -107,7 +110,9 @@ class BusMonitorConfigFlow(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, d
         return await client.devices()
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        return self.async_show_menu(step_id="user", menu_options=[PROVIDER_TRACCAR, PROVIDER_BOUNCIE])
+        return self.async_show_menu(
+            step_id="user", menu_options=[PROVIDER_TRACCAR, PROVIDER_BOUNCIE, PROVIDER_HA_TRACKER]
+        )
 
     async def async_step_traccar(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
@@ -186,6 +191,20 @@ class BusMonitorConfigFlow(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, d
                 "redirect_url": redirect_url,
             },
         )
+
+    async def async_step_device_tracker(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """No login: pick from the trackers that have a location right now."""
+        await self.async_set_unique_id(PROVIDER_HA_TRACKER)
+        self._abort_if_unique_id_configured()
+        devices = await HomeAssistantTrackers(self.hass).devices()
+        self._devices = [d for d in devices if d.status == "online"]
+        if not self._devices:
+            return self.async_abort(reason="no_trackers")
+        self._conn = {CONF_PROVIDER: PROVIDER_HA_TRACKER}
+        self._title = "Home Assistant trackers"
+        return await self.async_step_devices()
 
     async def async_oauth_create_entry(self, data: dict[str, Any]) -> ConfigFlowResult:
         """Bouncie sign-in finished: identify the user, then let them pick vehicles."""

@@ -3,10 +3,11 @@
     "step": {
       "user": {
         "title": "Where does the bus position come from?",
-        "description": "Pick the tracking provider. To use several (e.g. a Traccar server and a Bouncie account), add Bus Monitor once for each.",
+        "description": "Pick where the bus position comes from. To use several (e.g. a Traccar server and a Bouncie account), add Bus Monitor once for each.",
         "menu_options": {
           "traccar": "Traccar GPS server",
-          "bouncie": "Bouncie (OBD plug-in tracker)"
+          "bouncie": "Bouncie (OBD plug-in tracker)",
+          "device_tracker": "A GPS tracker already in Home Assistant"
         }
       },
       "traccar": {
@@ -59,13 +60,14 @@
       "no_devices": "You're signed in, but this login can't see any buses. Ask your bus company to share the bus with this login."
     },
     "abort": {
-      "already_configured": "This account is already set up.",
+      "already_configured": "This is already set up. To follow another tracker, choose Add bus profile on the Bus Monitor integration page.",
       "reauth_successful": "Re-authentication was successful.",
       "cannot_connect": "Cannot reach the tracking provider.",
       "invalid_auth": "The sign-in was rejected.",
       "no_devices": "This Bouncie account has no vehicles yet. Add the vehicle in the Bouncie app, then try again.",
       "wrong_account": "You signed in to a different Bouncie account than the one this entry uses.",
-      "missing_configuration": "Bouncie isn't configured: add Application credentials for Bus Monitor first."
+      "missing_configuration": "Bouncie isn't configured: add Application credentials for Bus Monitor first.",
+      "no_trackers": "No tracker in Home Assistant has a location right now. Set up the integration that tracks the vehicle first, and check that its device_tracker entity shows latitude and longitude. Trackers based on a router or Bluetooth don't report a location."
     },
     "create_entry": {
       "default": "Connected."
