@@ -5,10 +5,16 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from aiohttp import ClientResponseError, RequestInfo
+from aiohttp import ClientConnectionError, ClientResponseError, RequestInfo
 from homeassistant.components.application_credentials import ClientCredential
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import OAuth2TokenRequestReauthError
+from homeassistant.exceptions import (
+    ConfigEntryAuthFailed,
+    ConfigEntryNotReady,
+    OAuth2TokenRequestConnectionError,
+    OAuth2TokenRequestReauthError,
+    OAuth2TokenRequestTransientError,
+)
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from yarl import URL
 
@@ -132,3 +138,35 @@ async def test_token_request_is_json(hass: HomeAssistant):
         "client_id": "cid",
         "client_secret": "secret",
     }
+
+
+@pytest.mark.parametrize(
+    ("status", "error", "outcome"),
+    [
+        (400, OAuth2TokenRequestReauthError, ConfigEntryAuthFailed),
+        (401, OAuth2TokenRequestReauthError, ConfigEntryAuthFailed),
+        (429, OAuth2TokenRequestTransientError, ConfigEntryNotReady),
+        (503, OAuth2TokenRequestTransientError, ConfigEntryNotReady),
+    ],
+)
+async def test_failed_token_request_status(hass, aioclient_mock, status, error, outcome):
+    """A rejected refresh asks for a new sign-in; a temporary failure retries."""
+    aioclient_mock.post(TOKEN_URL, status=status)
+    impl = await async_get_auth_implementation(
+        hass, "bus_monitor", ClientCredential("cid", "secret")
+    )
+    with pytest.raises(error) as caught:
+        await impl.async_refresh_token({"refresh_token": "r1", "access_token": "x"})
+    assert isinstance(caught.value, outcome)
+    assert isinstance(caught.value, ClientResponseError)
+    assert caught.value.status == status
+
+
+async def test_token_request_without_a_response_retries(hass, aioclient_mock):
+    aioclient_mock.post(TOKEN_URL, exc=ClientConnectionError())
+    impl = await async_get_auth_implementation(
+        hass, "bus_monitor", ClientCredential("cid", "secret")
+    )
+    with pytest.raises(OAuth2TokenRequestConnectionError) as caught:
+        await impl.async_refresh_token({"refresh_token": "r1", "access_token": "x"})
+    assert isinstance(caught.value, ConfigEntryNotReady)

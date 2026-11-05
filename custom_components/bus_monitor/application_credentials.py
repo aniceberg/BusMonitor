@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from http import HTTPStatus
 from typing import cast
 
 from aiohttp import ClientError, ClientResponseError
@@ -11,10 +12,37 @@ from homeassistant.components.application_credentials import (
     ClientCredential,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import (
+    OAuth2TokenRequestConnectionError,
+    OAuth2TokenRequestError,
+    OAuth2TokenRequestReauthError,
+    OAuth2TokenRequestTransientError,
+)
 from homeassistant.helpers import config_entry_oauth2_flow
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .providers.bouncie import AUTHORIZE_URL, TOKEN_URL
+
+
+def _token_error(err: ClientResponseError, domain: str) -> OAuth2TokenRequestError:
+    """429 and 5xx can be retried, other 4xx need a new sign-in. These are Home Assistant's
+    public errors: the reauth one is a ConfigEntryAuthFailed and the others are
+    ConfigEntryNotReady, and all are ClientResponseErrors, which the sign-in flow and
+    BouncieClient both handle."""
+    if err.status == HTTPStatus.TOO_MANY_REQUESTS or err.status >= 500:
+        error = OAuth2TokenRequestTransientError
+    elif err.status >= 400:
+        error = OAuth2TokenRequestReauthError
+    else:
+        error = OAuth2TokenRequestError
+    return error(
+        request_info=err.request_info,
+        history=err.history,
+        status=err.status,
+        message=err.message,
+        headers=err.headers,
+        domain=domain,
+    )
 
 
 class BouncieOAuth2Implementation(AuthImplementation):
@@ -27,9 +55,10 @@ class BouncieOAuth2Implementation(AuthImplementation):
             resp = await session.post(self.token_url, json=data)
             resp.raise_for_status()
             return cast(dict, await resp.json(content_type=None))
-        except (ClientResponseError, ClientError) as err:
-            # Same mapping as Home Assistant's own: 4xx -> reauth, 429/5xx -> retry.
-            config_entry_oauth2_flow._raise_mapped_token_error(err, self.service_domain)
+        except ClientResponseError as err:
+            raise _token_error(err, self.service_domain) from err
+        except ClientError as err:
+            raise OAuth2TokenRequestConnectionError(domain=self.service_domain) from err
 
 
 async def async_get_description_placeholders(hass: HomeAssistant) -> dict[str, str]:
